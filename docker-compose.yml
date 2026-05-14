@@ -1,0 +1,10 @@
+services:
+  trace-viewer:
+    build: .
+    ports:
+      - "3099:3099"
+    volumes:
+      - ~/.claude:/data/.claude:ro
+    environment:
+      - CLAUDE_DIR=/data/.claude
+      - PORT=3099
