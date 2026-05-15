@@ -12,6 +12,9 @@ dist
 dist-ssr
 *.local
 
+.claude/skills
+.agents/skills
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
