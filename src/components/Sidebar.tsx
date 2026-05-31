@@ -1,7 +1,10 @@
-import type { SessionInfo } from "../types";
+import { useMemo, useState } from "react";
+import type { ProjectMeta, SessionInfo } from "../types";
+import { Icons } from "../lib/icons";
+import { modelFamily, relTime } from "../lib/format";
 
 interface Props {
-  projects: string[];
+  projects: ProjectMeta[];
   selectedProject: string | null;
   onSelectProject: (p: string) => void;
   sessions: SessionInfo[];
@@ -9,41 +12,133 @@ interface Props {
   onSelectSession: (id: string) => void;
   onDeleteSession: (id: string) => void;
   onDeleteAllSessions: () => void;
+  onResizeStart?: (e: React.MouseEvent) => void;
 }
 
-function formatProjectName(slug: string): string {
-  const cleaned = slug.replace(/^-Users-[^-]+-/, "~/").replace(/-/g, "/");
-  // Show last 2-3 meaningful path segments
+interface ProjectNode {
+  id: string;
+  group: string;
+  leaf: string;
+  sessionCount: number;
+}
+
+function decodeProject(p: ProjectMeta): ProjectNode {
+  const cleaned = p.name.replace(/^-Users-[^-]+-/, "").replace(/-/g, "/");
   const parts = cleaned.split("/").filter(Boolean);
-  if (parts.length <= 3) return cleaned;
-  return "~/" + parts.slice(-3).join("/");
+  const leaf = parts[parts.length - 1] || p.name;
+  const group = parts.slice(Math.max(0, parts.length - 3), parts.length - 1).join("/");
+  return { id: p.name, group: group ? group + "/" : "", leaf, sessionCount: p.sessionCount };
 }
 
-function formatDate(iso: string): string {
-  const d = new Date(iso);
-  const now = new Date();
-  const diff = now.getTime() - d.getTime();
-  if (diff < 60000) return "just now";
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
-  return d.toLocaleDateString();
+function isLive(modifiedIso: string): boolean {
+  if (!modifiedIso) return false;
+  return Date.now() - new Date(modifiedIso).getTime() < 60000;
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes}B`;
-  if (bytes < 1048576) return `${(bytes / 1024).toFixed(0)}K`;
-  return `${(bytes / 1048576).toFixed(1)}M`;
+/* strip Claude Code's XML wrappers from a session preview so it reads as plain text */
+function cleanPreview(raw: string): string {
+  let t = (raw || "").replace(/\s+/g, " ").trim();
+  // drop noisy wrapper blocks entirely (caveats / system notices / command args)
+  const dropBlocks = [
+    /<local-command-(?:caveat|stdout|stderr)>[\s\S]*?<\/local-command-(?:caveat|stdout|stderr)>/gi,
+    /<system-reminder>[\s\S]*?<\/system-reminder>/gi,
+    /<system-info[^>]*>[\s\S]*?<\/system-info>/gi,
+    /<command-(?:args|message)>[\s\S]*?<\/command-(?:args|message)>/gi,
+    /<command-name>[\s\S]*?<\/command-name>/gi,
+  ];
+  for (const re of dropBlocks) t = t.replace(re, "");
+  // keep inner text of any remaining tags
+  t = t.replace(/<[^>]+>/g, "");
+  return t.replace(/\s+/g, " ").trim();
 }
 
-function getSessionTitle(s: SessionInfo): string {
-  // Use preview (first user message) as title, fall back to slug
-  if (s.preview) {
-    const clean = s.preview.replace(/\s+/g, " ").trim();
-    return clean.length > 60 ? clean.slice(0, 57) + "..." : clean;
-  }
-  if (s.slug) return s.slug;
+function sessionTitle(s: SessionInfo): string {
+  const cleaned = cleanPreview(s.preview || s.slug || "");
+  if (cleaned) return cleaned.length > 80 ? cleaned.slice(0, 77) + "…" : cleaned;
   return s.id.slice(0, 8);
+}
+
+function sessionCommand(s: SessionInfo): string | null {
+  const raw = s.preview || s.slug || "";
+  // explicit XML command-name wins
+  const xml = raw.match(/<command-name>\s*(\/[a-z][\w:-]*)\s*<\/command-name>/i);
+  if (xml) return xml[1];
+  // bare slash-command at the start
+  const bare = raw.trim().match(/^(\/[a-z][\w:-]+)/i);
+  return bare ? bare[1] : null;
+}
+
+function SessionRow({ s, active, onSelect, onDelete }: { s: SessionInfo; active: boolean; onSelect: (id: string) => void; onDelete: (id: string) => void }) {
+  const live = isLive(s.modified);
+  const cmd = sessionCommand(s);
+  const title = sessionTitle(s);
+  // Heuristic for model — slug ends with model id? otherwise unknown
+  const fam = modelFamily("");
+  return (
+    <button className={"sess-row " + (active ? "active" : "")} onClick={() => onSelect(s.id)}>
+      <span className={"sess-dot " + (live ? "live" : "")} style={{ "--mc": `var(--${fam})` } as React.CSSProperties}>
+        {live ? <span className="live-dot" /> : null}
+      </span>
+      <span className="sess-body">
+        <span className="sess-line1">
+          {cmd ? <span className="sess-cmd">{cmd}</span> : <span className="sess-title">{title}</span>}
+          {live ? <span className="sess-livetag">live</span> : null}
+        </span>
+        {cmd ? <span className="sess-preview">{title.replace(cmd, "").trim() || s.slug}</span> : null}
+        <span className="sess-meta">
+          <span>{relTime(s.modified)}</span>
+          <span>· {s.lineCount} msgs</span>
+          <span className="sess-size">{(s.size / 1024).toFixed(0)}k</span>
+        </span>
+      </span>
+      <span
+        role="button"
+        tabIndex={-1}
+        className="sess-delete"
+        title="Delete session"
+        onClick={(e) => {
+          e.stopPropagation();
+          if (confirm("Delete this session?")) onDelete(s.id);
+        }}
+      >
+        ✕
+      </span>
+    </button>
+  );
+}
+
+function ProjectRow({
+  proj,
+  open,
+  onToggle,
+  childCount,
+  hasLive,
+  children,
+}: {
+  proj: ProjectNode;
+  open: boolean;
+  onToggle: () => void;
+  childCount: number;
+  hasLive: boolean;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="proj-block">
+      <button className={"proj-row " + (open ? "open" : "")} onClick={onToggle}>
+        <span className="proj-caret">
+          <Icons.chevron size={12} style={{ transform: open ? "rotate(90deg)" : "none", transition: "transform .15s" }} />
+        </span>
+        <span className="proj-folder"><Icons.folder size={13} /></span>
+        <span className="proj-name">
+          {proj.group ? <span className="proj-group">{proj.group}</span> : null}
+          <span className="proj-leaf">{proj.leaf}</span>
+        </span>
+        {hasLive ? <span className="proj-live-dot" /> : null}
+        {childCount > 0 ? <span className="proj-count">{childCount}</span> : null}
+      </button>
+      {open ? <div className="proj-sessions">{children}</div> : null}
+    </div>
+  );
 }
 
 export function Sidebar({
@@ -55,80 +150,105 @@ export function Sidebar({
   onSelectSession,
   onDeleteSession,
   onDeleteAllSessions,
+  onResizeStart,
 }: Props) {
+  const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => ({ [selectedProject || ""]: true }));
+
+  const projectNodes = useMemo(() => projects.map(decodeProject), [projects]);
+  const sessionsForSelected = sessions;
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return projectNodes;
+    return projectNodes.filter(p =>
+      (p.leaf + " " + p.group).toLowerCase().includes(q) ||
+      (p.id === selectedProject &&
+        sessionsForSelected.some(s => ((s.preview || "") + " " + (s.slug || "")).toLowerCase().includes(q)))
+    );
+  }, [projectNodes, query, sessionsForSelected, selectedProject]);
+
+  const liveCount = sessionsForSelected.filter(s => isLive(s.modified)).length;
+
   return (
-    <div className="sidebar">
-      <div className="sidebar-header">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 20V10"/>
-          <path d="M18 20V4"/>
-          <path d="M6 20v-4"/>
-        </svg>
-        Claude Trace Viewer
+    <aside className="sidebar">
+      <div className="brand">
+        <span className="brand-mark"><Icons.layers size={17} /></span>
+        <span className="brand-text">
+          <span className="brand-name">Trace Viewer</span>
+          <span className="brand-sub mono">claude-code</span>
+        </span>
       </div>
 
-      <div className="project-select">
-        <select
-          value={selectedProject || ""}
-          onChange={(e) => onSelectProject(e.target.value)}
-        >
-          <option value="" disabled>
-            Select project...
-          </option>
-          {projects.map((p) => (
-            <option key={p} value={p}>
-              {formatProjectName(p)}
-            </option>
-          ))}
-        </select>
+      <div className="nav-searchwrap">
+        <Icons.search size={14} />
+        <input
+          className="nav-search"
+          placeholder="filter projects…"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+        {query ? <button className="nav-search-clear" onClick={() => setQuery("")}>×</button> : null}
       </div>
 
-      {selectedProject && sessions.length > 0 && (
-        <div className="session-list-header">
-          <span className="session-count">{sessions.length} sessions</span>
-          <button
-            className="delete-all-btn"
-            onClick={() => {
-              if (confirm(`Delete all ${sessions.length} sessions in this project?`))
-                onDeleteAllSessions();
-            }}
-          >
-            Clear all
-          </button>
-        </div>
-      )}
+      <div className="nav-head">
+        <span className="nav-head-label"><Icons.folder size={12} /> projects</span>
+        <span className="nav-head-meta">~/.claude/projects</span>
+      </div>
 
-      <div className="session-list">
-        {sessions.map((s) => (
-          <div
-            key={s.id}
-            className={`session-item ${selectedSession === s.id ? "selected" : ""}`}
-            onClick={() => onSelectSession(s.id)}
-          >
-            <div className="session-title-row">
-              <div className="session-title">{getSessionTitle(s)}</div>
-              <button
-                className="session-delete"
-                title="Delete session"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  if (confirm("Delete this session?")) onDeleteSession(s.id);
+      <div className="nav-scroll">
+        {filtered.length === 0 ? (
+          <div className="sidebar-empty">No projects</div>
+        ) : (
+          filtered.map(p => {
+            const isSel = p.id === selectedProject;
+            const childList = isSel ? sessionsForSelected : [];
+            const open = !!expanded[p.id] || (!!query.trim() && childList.length > 0);
+            return (
+              <ProjectRow
+                key={p.id}
+                proj={p}
+                open={open}
+                onToggle={() => {
+                  if (!isSel) onSelectProject(p.id);
+                  setExpanded(e => ({ ...e, [p.id]: !e[p.id] }));
                 }}
+                childCount={isSel ? childList.length : p.sessionCount}
+                hasLive={isSel && liveCount > 0}
               >
-                &#10005;
-              </button>
-            </div>
-            {s.slug && s.preview && (
-              <div className="session-slug-label">{s.slug}</div>
-            )}
-            <div className="session-meta">
-              <span>{formatDate(s.modified)}</span>
-              <span>{s.lineCount} msgs</span>
-              <span>{formatSize(s.size)}</span>
-            </div>
-          </div>
-        ))}
+                {isSel && childList.length === 0 ? (
+                  <div className="sidebar-empty" style={{ padding: "8px 4px" }}>no sessions</div>
+                ) : null}
+                {isSel && childList.map(s => (
+                  <SessionRow
+                    key={s.id}
+                    s={s}
+                    active={s.id === selectedSession}
+                    onSelect={onSelectSession}
+                    onDelete={onDeleteSession}
+                  />
+                ))}
+              </ProjectRow>
+            );
+          })
+        )}
       </div>
-    </div>
+
+      <div className="side-foot">
+        <div className="meta-line"><span>{projects.length} projects</span><b>{sessionsForSelected.length} sessions</b></div>
+        {selectedProject && sessionsForSelected.length > 0 ? (
+          <div className="meta-line">
+            <span>actions</span>
+            <button
+              onClick={() => { if (confirm(`Delete all ${sessionsForSelected.length} sessions?`)) onDeleteAllSessions(); }}
+              style={{ background: "transparent", border: "none", color: "var(--tx-3)", cursor: "pointer", fontFamily: "var(--ff-mono)", fontSize: "10.5px" }}
+            >
+              <Icons.trash size={11} style={{ verticalAlign: "middle" }} /> clear all
+            </button>
+          </div>
+        ) : null}
+      </div>
+      {onResizeStart ? <div className="sidebar-resize" onMouseDown={onResizeStart} title="Drag to resize" /> : null}
+    </aside>
   );
 }

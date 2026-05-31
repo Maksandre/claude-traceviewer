@@ -8,6 +8,12 @@ export interface SessionInfo {
   preview: string;
 }
 
+export interface ProjectMeta {
+  name: string;
+  sessionCount: number;
+  mtime: number;
+}
+
 export interface ContentBlock {
   type: "text" | "thinking" | "tool_use" | "tool_result" | "image";
   text?: string;
