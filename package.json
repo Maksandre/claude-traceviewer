@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"tsx server.ts\" \"vite\"",
+    "dev": "concurrently \"tsx watch server.ts\" \"vite\"",
     "server": "tsx server.ts",
     "build": "tsc -b && vite build",
     "lint": "eslint .",

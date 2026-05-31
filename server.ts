@@ -12,25 +12,25 @@ const PROJECTS_DIR = path.join(CLAUDE_DIR, "projects");
 
 app.get("/api/projects", (_req, res) => {
   try {
-    const dirs = fs.readdirSync(PROJECTS_DIR)
+    const projects = fs.readdirSync(PROJECTS_DIR)
       .filter((d) => fs.statSync(path.join(PROJECTS_DIR, d)).isDirectory())
       .map((d) => {
-        // Find the most recent .jsonl file modification time
         const projectPath = path.join(PROJECTS_DIR, d);
         let latestMtime = 0;
+        let sessionCount = 0;
         try {
           for (const f of fs.readdirSync(projectPath)) {
             if (f.endsWith(".jsonl")) {
+              sessionCount++;
               const mt = fs.statSync(path.join(projectPath, f)).mtimeMs;
               if (mt > latestMtime) latestMtime = mt;
             }
           }
         } catch {}
-        return { name: d, mtime: latestMtime };
+        return { name: d, sessionCount, mtime: latestMtime };
       })
-      .sort((a, b) => b.mtime - a.mtime)
-      .map((d) => d.name);
-    res.json(dirs);
+      .sort((a, b) => b.mtime - a.mtime);
+    res.json(projects);
   } catch {
     res.json([]);
   }
