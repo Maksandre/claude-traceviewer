@@ -1,69 +1,57 @@
 # Claude Trace Viewer
 
-A local web UI for browsing Claude Code session traces stored in `~/.claude/projects/`. Lists projects and `.jsonl` session logs, renders the conversation (user/assistant turns, thinking blocks, tool calls, subagent transcripts), and auto-refreshes every 5s so live sessions stream in.
+A local viewer for Claude Code sessions. Browses the `.jsonl` trace files Claude Code writes under `~/.claude/` and renders them as readable conversations.
 
-## Stack
+Useful when developing custom subagents and skills: the delegation tree, per-agent transcripts, prompts, tool calls, and per-agent token spend are all visible side by side.
 
-- **Backend**: Express 5 + `tsx` (`server.ts`) — reads `.jsonl` files directly from disk, no DB.
-- **Frontend**: React 19 + Vite 8 (`src/`).
-- **Port**: `3099` (override with `PORT`).
-- **Source dir**: `~/.claude` (override with `CLAUDE_DIR`).
+![Conversation view](docs/img/conversation.png)
+
+## What it shows
+
+- The full transcript of a session: user messages, assistant turns, thinking blocks, tool calls, and tool results.
+- A sidebar listing every project and session found on disk.
+- Live sessions, refreshed every 5 seconds.
+- In-conversation search.
+- Light and dark themes.
+
+## Stats per session
+
+![Stats](docs/img/stats.png)
+
+Total cost, token volume, wall-clock duration, agent count, tool calls, cache hit rate, model mix, and a per-agent cost breakdown.
+
+## Subagent delegation
+
+![Agents](docs/img/agents.png)
+
+If the session used subagents, the delegation tree is shown with each agent's prompt, model, tool calls, duration, and cost. Click a row to open that agent's transcript.
 
 ## Run
 
 ```bash
 npm install
-npm run dev      # vite on 5173, api on 3099 (vite proxies /api)
+npm run dev
 ```
 
-Production:
+Then open [http://localhost:5173](http://localhost:5173).
+
+Single-port production build:
 
 ```bash
-npm run build && npm start    # serves dist/ + api on 3099
+npm run build
+npm start                  # http://localhost:3099
 ```
 
 Docker:
 
 ```bash
-docker compose up             # mounts ~/.claude read-only, exposes :3099
+docker compose up          # http://localhost:3099 — mounts ~/.claude read-only
 ```
 
-## API
+Sessions are read from `~/.claude` by default. Override with the `CLAUDE_DIR` environment variable.
 
-| Method | Path | Returns |
-| --- | --- | --- |
-| GET | `/api/projects` | project dir names, sorted by latest session mtime |
-| GET | `/api/projects/:project/sessions` | sessions with `id`, `size`, `modified`, `lineCount`, `slug`, first-user-message `preview` |
-| GET | `/api/projects/:project/sessions/:session` | parsed JSONL records |
-| GET | `/api/projects/:project/sessions/:session/agents` | subagents from `<session>/subagents/agent-*.meta.json` |
-| GET | `/api/projects/:project/sessions/:session/agents/:agentId` | `{ meta, records }` for one subagent |
-| DELETE | `/api/projects/:project/sessions` | wipes all `.jsonl` + companion dirs in project |
-| DELETE | `/api/projects/:project/sessions/:session` | deletes one session + its companion dir |
+## Cost numbers
 
-## Layout
+Costs are **notional**: every session is priced as if the tokens were billed at the public Anthropic API rates, regardless of how you actually pay. If you're on a Claude Pro/Max subscription, no money was charged per token — the figure shown is what the same usage would have cost on the metered API, which is a useful proxy for comparing sessions, agents, and runs against each other.
 
-```
-server.ts                 Express API
-src/App.tsx               root, 5s polling, drawer + view routing
-src/components/           Sidebar, Toolbar, ConversationView, AgentsView,
-                          StatsView, AgentDrawer, conversation/*
-src/lib/                  format, icons, md, normalize, pricing.json
-src/types.ts              SessionInfo, TraceRecord
-```
-
-## Cost calculation
-
-Per-token rates live in `src/lib/pricing.json` — a snapshot of the
-[LiteLLM model price registry](https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/model_prices_and_context_window_backup.json),
-filtered to entries where `litellm_provider == "anthropic"` (direct Anthropic
-API rates, not Bedrock/Vertex). Covers Opus 3 → 4.8, Sonnet 3.7 → 4.6, Haiku
-3 → 4.5, with `input` / `output` / `cache_creation` / `cache_read` per token.
-
-`costFor(model, usage)` in `src/lib/format.ts` resolves a rate by:
-
-1. **exact model id** (`claude-opus-4-7-20260416`),
-2. **date-stripped id** (`claude-opus-4-7`),
-3. **family fallback** (opus / sonnet / haiku) if the snapshot has no match.
-
-To refresh, re-fetch the upstream JSON and copy the entries with
-`litellm_provider == "anthropic"` into `pricing.json`; bump `_meta.fetchedAt`.
+Rates come from a bundled snapshot covering Opus, Sonnet, and Haiku 3 → 4.x. Bedrock and Vertex routing are not modeled.
