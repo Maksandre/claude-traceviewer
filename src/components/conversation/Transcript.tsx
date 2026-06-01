@@ -101,18 +101,18 @@ function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settin
   const steps = msgs.length;
   const allBlocks = msgs.flatMap(m => m.blocks);
   return (
-    <div className={"msg asst " + (extraClass || "fade-in")}>
+    <div className={"msg asst " + (extraClass || "fade-in")} style={{ "--mc": `var(--${fam})` } as React.CSSProperties}>
       <div className="msg-gutter">
-        <span className="role-dot asst-dot" style={{ "--mc": `var(--${fam})` } as React.CSSProperties}>
-          <Icons.spark size={12} />
+        <span className="gutter-anchor">
+          <span className="role-dot asst-dot">
+            <Icons.spark size={12} />
+          </span>
+          <span className="gutter-label asst">{modelLabel(group.model)}</span>
         </span>
         <span className="gutter-line" />
       </div>
       <div className="msg-main">
         <div className="msg-head">
-          <span className="model-badge" style={{ "--mc": `var(--${fam})` } as React.CSSProperties}>
-            <span className="model-dot" />{modelLabel(group.model)}
-          </span>
           {steps > 1 ? <span className="steps-badge tnum" title={steps + " model turns combined"}>{steps} steps</span> : null}
           {skill ? <span className="skill-badge">{skill}</span> : null}
           <span className="msg-time">{fmtTime(msgs[0].ts)}</span>

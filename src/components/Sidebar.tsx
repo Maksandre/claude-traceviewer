@@ -6,7 +6,7 @@ import { modelFamily, relTime } from "../lib/format";
 interface Props {
   projects: ProjectMeta[];
   selectedProject: string | null;
-  onSelectProject: (p: string) => void;
+  onSelectProject: (p: string | null) => void;
   sessions: SessionInfo[];
   selectedSession: string | null;
   onSelectSession: (id: string) => void;
@@ -153,7 +153,6 @@ export function Sidebar({
   onResizeStart,
 }: Props) {
   const [query, setQuery] = useState("");
-  const [expanded, setExpanded] = useState<Record<string, boolean>>(() => ({ [selectedProject || ""]: true }));
 
   const projectNodes = useMemo(
     () => projects.map(decodeProject).filter(p => p.sessionCount > 0),
@@ -206,16 +205,12 @@ export function Sidebar({
           filtered.map(p => {
             const isSel = p.id === selectedProject;
             const childList = isSel ? sessionsForSelected : [];
-            const open = !!expanded[p.id] || (!!query.trim() && childList.length > 0);
             return (
               <ProjectRow
                 key={p.id}
                 proj={p}
-                open={open}
-                onToggle={() => {
-                  if (!isSel) onSelectProject(p.id);
-                  setExpanded(e => ({ ...e, [p.id]: !e[p.id] }));
-                }}
+                open={isSel}
+                onToggle={() => onSelectProject(isSel ? null : p.id)}
                 childCount={isSel ? childList.length : p.sessionCount}
                 hasLive={isSel && liveCount > 0}
               >

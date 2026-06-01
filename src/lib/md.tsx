@@ -14,18 +14,19 @@ export interface Usage { input: number; output: number; cw: number; cr: number; 
 
 export function UsageChips({ u, compact = false }: { u?: Usage; compact?: boolean }) {
   if (!u) return null;
-  const items: Array<[string, number, string]> = [
-    ["in", u.input, "var(--tx-2)"],
-    ["out", u.output, "var(--tx-1)"],
-    ["cache+", u.cw, "var(--warn)"],
-    ["cache→", u.cr, "var(--sonnet)"],
+  const items: Array<{ k: string; v: number; cls: string }> = [
+    { k: "in",     v: u.input,  cls: "in" },
+    { k: "out",    v: u.output, cls: "out" },
+    { k: "cache+", v: u.cw,     cls: "cw" },
+    { k: "cache→", v: u.cr,     cls: "cr" },
   ];
-  const filtered = items.filter(([, v]) => v > 0);
+  const filtered = items.filter(it => it.v > 0);
   return (
-    <span style={{ display: "inline-flex", gap: compact ? 6 : 8, alignItems: "center", flexWrap: "wrap" }}>
-      {filtered.map(([k, v, c]) => (
-        <span key={k} className="mono tnum" style={{ fontSize: 11, color: "var(--tx-2)" }}>
-          <span style={{ color: c, opacity: 0.85 }}>{k}</span>&nbsp;{fmtTokens(v)}
+    <span className={"usage-chips " + (compact ? "is-compact" : "")}>
+      {filtered.map(it => (
+        <span key={it.k} className={"uc " + it.cls}>
+          <span className="uc-k">{it.k}</span>
+          <span className="uc-v tnum">{fmtTokens(it.v)}</span>
         </span>
       ))}
     </span>

@@ -642,12 +642,14 @@ export function UserGroup({ msgs, extraClass = "" }: { msgs: NormMsg[]; extraCla
   return (
     <div className={"msg user " + (extraClass || "fade-in")}>
       <div className="msg-gutter">
-        <span className="role-dot user-dot"><Icons.user size={13} /></span>
+        <span className="gutter-anchor">
+          <span className="role-dot user-dot"><Icons.user size={13} /></span>
+          <span className="gutter-label">You</span>
+        </span>
         {msgs.length > 1 ? <span className="gutter-line" /> : null}
       </div>
       <div className="msg-main">
         <div className="msg-head">
-          <span className="role-name">You</span>
           <span className="msg-time">{fmtTime(first.ts)}</span>
           {msgs.length > 1 ? <span className="user-group-tag">{msgs.length} parts</span> : null}
         </div>

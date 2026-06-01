@@ -269,11 +269,14 @@ button { font-family: inherit; }
    MESSAGES
    ============================================================ */
 .transcript { display: flex; flex-direction: column; }
-.msg { display: grid; grid-template-columns: 34px 1fr; gap: 14px; padding: var(--row-py) 0; }
-.msg-gutter { display: flex; flex-direction: column; align-items: center; }
+.msg { display: grid; grid-template-columns: 76px 1fr; gap: 14px; padding: var(--row-py) 0; }
+.msg-gutter { display: flex; flex-direction: column; align-items: center; min-width: 0; }
+.gutter-anchor { display: flex; flex-direction: column; align-items: center; gap: 6px; position: sticky; top: 14px; z-index: 2; min-width: 0; }
+.gutter-label { font-family: var(--ff-mono); font-size: 10.5px; font-weight: 600; letter-spacing: .01em; white-space: nowrap; text-align: center; color: var(--tx-1); padding: 2px 8px; border-radius: 99px; background: var(--bg-2); border: 1px solid var(--line-soft); }
+.gutter-label.asst { color: var(--mc); background: color-mix(in oklch, var(--mc) 12%, var(--bg-1)); border-color: color-mix(in oklch, var(--mc) 30%, transparent); }
 .role-dot { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex-shrink: 0; }
 .user-dot { background: var(--bg-3); color: var(--tx-1); }
-.asst-dot { background: color-mix(in oklch, var(--mc) 18%, transparent); color: var(--mc); }
+.asst-dot { background: color-mix(in oklch, var(--mc) 18%, var(--bg-0)); color: var(--mc); }
 .sys-dot { background: var(--bg-3); color: var(--tx-2); }
 .gutter-line { flex: 1; width: 2px; background: var(--line-soft); margin-top: 8px; border-radius: 2px; }
 .msg-main { min-width: 0; }
@@ -288,7 +291,20 @@ button { font-family: inherit; }
 .skill-badge { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-2); background: var(--bg-2); border: 1px solid var(--line-soft); padding: 2px 8px; border-radius: 99px; }
 .steps-badge { font-family: var(--ff-mono); font-size: 10.5px; color: var(--tx-2); background: var(--bg-2); border: 1px solid var(--line-soft); padding: 2px 8px; border-radius: 99px; }
 .stop-badge { font-family: var(--ff-mono); font-size: 10.5px; color: var(--warn); background: color-mix(in oklch, var(--warn) 14%, transparent); padding: 2px 7px; border-radius: 99px; }
-.msg-cost { font-family: var(--ff-mono); font-size: 11.5px; color: var(--accent); font-weight: 600; }
+.msg-cost { font-family: var(--ff-mono); font-size: 11.5px; color: var(--accent); font-weight: 600; padding-left: 10px; margin-left: 2px; border-left: 1px solid var(--line); }
+
+/* === Usage chips (token in/out/cache+ /cache→) === */
+.usage-chips { display: inline-flex; align-items: center; flex-wrap: wrap; font-family: var(--ff-mono); font-size: 11px; line-height: 1; }
+.usage-chips .uc { display: inline-flex; align-items: baseline; gap: 4px; padding: 0 9px; position: relative; }
+.usage-chips .uc:first-child { padding-left: 0; }
+.usage-chips .uc:last-child { padding-right: 0; }
+.usage-chips .uc + .uc::before { content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%); width: 1px; height: 10px; background: var(--line); }
+.usage-chips .uc-k { font-size: 9.5px; letter-spacing: .04em; text-transform: lowercase; font-weight: 600; opacity: .9; }
+.usage-chips .uc-v { color: var(--tx-0); font-weight: 500; }
+.usage-chips .uc.in .uc-k { color: var(--tx-3); }
+.usage-chips .uc.out .uc-k { color: var(--tx-2); }
+.usage-chips .uc.cw .uc-k { color: var(--warn); }
+.usage-chips .uc.cr .uc-k { color: var(--sonnet); }
 .msg-blocks { display: flex; flex-direction: column; gap: 9px; }
 
 .msg.sysrow { display: block; }
@@ -548,7 +564,7 @@ button { font-family: inherit; }
 .atab-count { font-family: var(--ff-mono); font-size: 10.5px; background: var(--bg-3); color: var(--tx-2); padding: 1px 7px; border-radius: 99px; }
 .result-card { background: var(--bg-1); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 20px 22px; }
 .adetail-transcript .transcript { margin-top: -6px; }
-.adetail-transcript .msg { grid-template-columns: 30px 1fr; gap: 11px; }
+.adetail-transcript .msg { grid-template-columns: 70px 1fr; gap: 11px; }
 
 .delegation { margin-top: 6px; }
 .deleg-list { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
