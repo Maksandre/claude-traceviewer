@@ -116,6 +116,200 @@ export function ToolCard({ block, result, defaultOpen }: { block: NormBlock; res
   );
 }
 
+function StatusBadge({ result }: { result?: NormToolResult }) {
+  if (!result) return <span className="st pend" title="awaiting result">·</span>;
+  if (result.is_error) return <span className="st err" title="error"><Icons.alert size={12} />error</span>;
+  return <span className="st ok" title="ok"><Icons.check size={12} /></span>;
+}
+
+function statusTone(status: string): "ok" | "warn" | "err" | "muted" {
+  if (status === "completed" || status === "done") return "ok";
+  if (status === "in_progress" || status === "running" || status === "active") return "warn";
+  if (status === "cancelled" || status === "failed" || status === "error") return "err";
+  return "muted";
+}
+
+export interface TaskSnapshot {
+  id: string;
+  subject: string;
+  description: string;
+  activeForm: string;
+  status: string;
+}
+
+function statusIcon(status: string) {
+  if (status === "completed") return <Icons.check size={11} />;
+  if (status === "in_progress" || status === "running" || status === "active") return <Icons.dot size={9} />;
+  if (status === "cancelled" || status === "failed" || status === "error") return <Icons.close size={10} />;
+  return null;
+}
+
+export function TaskListPanel({ tasks, highlightId, defaultOpen = false }: { tasks: TaskSnapshot[]; highlightId?: string; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  if (!tasks.length) return null;
+  const done = tasks.filter(t => t.status === "completed").length;
+  const inProg = tasks.filter(t => t.status === "in_progress" || t.status === "running").length;
+  return (
+    <div className={"task-list " + (open ? "is-open" : "")}>
+      <button className="task-list-head" onClick={() => setOpen(o => !o)} type="button">
+        <Caret open={open} />
+        <span className="task-list-label">Task list</span>
+        <span className="task-list-progress tnum">{done}/{tasks.length} done</span>
+        {inProg > 0 ? <span className="task-list-running tnum">{inProg} running</span> : null}
+      </button>
+      {open ? (
+        <ol className="task-list-items">
+          {tasks.map(t => {
+            const tone = statusTone(t.status);
+            const isHi = !!highlightId && t.id === highlightId;
+            return (
+              <li key={t.id} className={"task-list-item tone-" + tone + (isHi ? " is-hi" : "")}>
+                <span className={"task-list-mark " + tone}>{statusIcon(t.status)}</span>
+                <span className="task-list-id mono">#{t.id}</span>
+                <div className="task-list-body">
+                  <div className="task-list-subject">{t.subject || <span className="task-list-untitled">(untitled)</span>}</div>
+                  {(t.status === "in_progress" || t.status === "running") && t.activeForm ? (
+                    <div className="task-list-sub">{t.activeForm}</div>
+                  ) : null}
+                </div>
+                <span className={"task-list-statuspill " + tone}>{(t.status || "pending").replace(/_/g, " ")}</span>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+    </div>
+  );
+}
+
+export function TaskCreateCard({ block, result, tasks = [] }: { block: NormBlock; result?: NormToolResult; tasks?: TaskSnapshot[] }) {
+  const subject = (block.input?.subject as string) || (block.input?.title as string) || "";
+  const description = (block.input?.description as string) || "";
+  const activeForm = (block.input?.activeForm as string) || "";
+  const createdId = (() => {
+    if (!result) return undefined;
+    const text = typeof result.content === "string"
+      ? result.content
+      : Array.isArray(result.content)
+        ? result.content.map((b: any) => b?.text || "").join("\n")
+        : "";
+    const m = text.match(/Task\s*#(\d+)/i);
+    return m ? m[1] : undefined;
+  })();
+  return (
+    <div className="task-card create">
+      <div className="task-card-head">
+        <span className="task-card-ic accent"><Icons.plus size={13} /></span>
+        <span className="task-card-kind">Task created</span>
+        {createdId ? <span className="task-card-id mono">#{createdId}</span> : null}
+        <span className="task-card-status"><StatusBadge result={result} /></span>
+      </div>
+      {(subject || description || activeForm) ? (
+        <div className="task-card-body">
+          {subject ? <div className="task-card-subject">{subject}</div> : null}
+          {description ? <div className="task-card-desc">{description}</div> : null}
+          {activeForm ? <div className="task-card-active">{activeForm}</div> : null}
+        </div>
+      ) : null}
+      <TaskListPanel tasks={tasks} highlightId={createdId} />
+    </div>
+  );
+}
+
+export function TaskUpdateCard({ block, result, tasks = [] }: { block: NormBlock; result?: NormToolResult; tasks?: TaskSnapshot[] }) {
+  const raw = block.input?.taskId;
+  const taskId = raw !== undefined && raw !== null ? String(raw) : "";
+  const status = (block.input?.status as string) || "";
+  const tone = statusTone(status);
+  return (
+    <div className="task-card update">
+      <div className="task-card-head">
+        <span className={"task-card-ic " + tone}><Icons.tasks size={13} /></span>
+        <span className="task-card-kind">Task update</span>
+        {taskId ? <span className="task-card-id mono">#{taskId}</span> : null}
+        {status ? (
+          <>
+            <span className="task-arrow"><Icons.arrowRight size={11} /></span>
+            <span className={"task-card-statuspill " + tone}>{status.replace(/_/g, " ")}</span>
+          </>
+        ) : null}
+        <span className="task-card-status"><StatusBadge result={result} /></span>
+      </div>
+      <TaskListPanel tasks={tasks} highlightId={taskId} />
+    </div>
+  );
+}
+
+export function TaskGenericCard({ block, result, tasks = [], defaultOpen }: { block: NormBlock; result?: NormToolResult; tasks?: TaskSnapshot[]; defaultOpen?: boolean }) {
+  return (
+    <>
+      <ToolCard block={block} result={result} defaultOpen={defaultOpen} />
+      {tasks.length ? <TaskListPanel tasks={tasks} /> : null}
+    </>
+  );
+}
+
+interface AskQuestion {
+  question?: string;
+  header?: string;
+  multiSelect?: boolean;
+  options?: { label?: string; description?: string }[];
+}
+
+export function AskUserQuestionCard({ block, result }: { block: NormBlock; result?: NormToolResult }) {
+  const questions: AskQuestion[] = Array.isArray(block.input?.questions) ? (block.input!.questions as AskQuestion[]) : [];
+  const hasResult = !!result;
+  const isErr = !!result?.is_error;
+  const answerText = hasResult ? resultText(result.content) : "";
+  return (
+    <div className="ask-card">
+      <div className="ask-card-head">
+        <span className="ask-card-ic"><Icons.question size={14} /></span>
+        <span className="ask-card-label">Asked the user</span>
+        <span className="ask-card-status">
+          {!hasResult ? (
+            <span className="ask-card-pill warn">waiting…</span>
+          ) : isErr ? (
+            <span className="ask-card-pill err"><Icons.alert size={11} />error</span>
+          ) : (
+            <span className="ask-card-pill ok"><Icons.check size={11} />answered</span>
+          )}
+        </span>
+      </div>
+      <div className="ask-card-body">
+        {questions.map((q, i) => (
+          <div className="ask-q" key={i}>
+            <div className="ask-q-head">
+              {q.header ? <span className="ask-q-chip">{q.header}</span> : null}
+              <span className="ask-q-mode mono">{q.multiSelect ? "multi-select" : "single-select"}</span>
+            </div>
+            {q.question ? <div className="ask-q-text">{q.question}</div> : null}
+            {Array.isArray(q.options) && q.options.length ? (
+              <div className="ask-q-opts">
+                {q.options.map((o, j) => (
+                  <div className="ask-opt" key={j}>
+                    <span className={"ask-opt-mark " + (q.multiSelect ? "sq" : "ci")} />
+                    <div className="ask-opt-body">
+                      {o.label ? <div className="ask-opt-label">{o.label}</div> : null}
+                      {o.description ? <div className="ask-opt-desc">{o.description}</div> : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ))}
+        {hasResult && answerText ? (
+          <div className="ask-card-answer">
+            <div className="kv-label">user answered</div>
+            <CodeBlock code={answerText} max={240} />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 export function AgentSpawnCard({ block, agent, onOpen }: { block: NormBlock; agent?: NormAgent; onOpen: (id: string) => void }) {
   const type = (block.input?.subagent_type as string) || (agent?.agentType || "agent");
   const hue = agent ? agentMeta(agent.agentType).hue : agentMeta(type).hue;
@@ -325,11 +519,11 @@ function UserBody({ msg }: { msg: NormMsg }) {
   );
 }
 
-export function UserGroup({ msgs }: { msgs: NormMsg[] }) {
+export function UserGroup({ msgs, extraClass = "" }: { msgs: NormMsg[]; extraClass?: string }) {
   if (msgs.length === 0) return null;
   const first = msgs[0];
   return (
-    <div className="msg user fade-in">
+    <div className={"msg user " + (extraClass || "fade-in")}>
       <div className="msg-gutter">
         <span className="role-dot user-dot"><Icons.user size={13} /></span>
         {msgs.length > 1 ? <span className="gutter-line" /> : null}
@@ -348,16 +542,16 @@ export function UserGroup({ msgs }: { msgs: NormMsg[] }) {
   );
 }
 
-export function UserMessage({ msg, agentsByToolUse, onOpenAgent }: { msg: NormMsg; agentsByToolUse: Record<string, NormAgent>; onOpenAgent: (id: string) => void }) {
+export function UserMessage({ msg, agentsByToolUse, onOpenAgent, extraClass = "" }: { msg: NormMsg; agentsByToolUse: Record<string, NormAgent>; onOpenAgent: (id: string) => void; extraClass?: string }) {
   const tn = isUserTaskNotification(msg);
   if (tn) {
     const agent = agentsByToolUse[tn.toolUseId];
     return (
-      <div className="msg sysrow fade-in">
+      <div className={"msg sysrow " + (extraClass || "fade-in")}>
         <TaskNotificationCard data={tn} agent={agent} onOpen={onOpenAgent} ts={msg.ts} />
       </div>
     );
   }
-  return <UserGroup msgs={[msg]} />;
+  return <UserGroup msgs={[msg]} extraClass={extraClass} />;
 }
 

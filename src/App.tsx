@@ -187,6 +187,14 @@ function App() {
   }, [fetchSession, refreshProjectsAndSessions, selectedSession]);
 
   const settings = useMemo(() => ({ expandThinking: false, expandTools: false }), []);
+  const isWorking = useMemo(() => {
+    const msgs = trace?.main.messages;
+    if (!msgs || !msgs.length) return false;
+    const last = msgs[msgs.length - 1];
+    if (last.role === "user") return true;
+    const s = last.stopReason;
+    return !(s === "end_turn" || s === "stop_sequence" || s === "max_tokens");
+  }, [trace]);
   const drawerAgent = useMemo(() => trace?.agents.find(a => a.id === drawerId) || null, [trace, drawerId]);
   const agentCount = trace?.agents.length || 0;
   const hasSession = !!selectedSession;
@@ -263,7 +271,7 @@ function App() {
           ) : !trace ? (
             <div className="empty-state"><div>Loading trace…</div></div>
           ) : view === "conversation" ? (
-            <ConversationView trace={trace} query={query} onOpenAgent={setDrawerId} settings={settings} />
+            <ConversationView trace={trace} query={query} onOpenAgent={setDrawerId} settings={settings} live={isWorking} />
           ) : view === "agents" ? (
             <AgentsView
               trace={trace}
