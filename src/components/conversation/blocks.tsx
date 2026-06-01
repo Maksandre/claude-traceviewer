@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Icons, toolIcon } from "../../lib/icons";
 import { agentColor, agentMeta, fmtCost, fmtDur, fmtTime, fmtTokens, modelColor, modelLabel } from "../../lib/format";
 import { Caret, ClampBlock, CodeBlock, Markdown, MoreButton } from "../../lib/md";
@@ -112,6 +113,200 @@ export function ToolCard({ block, result, defaultOpen }: { block: NormBlock; res
           ) : <div className="tool-pending">awaiting result…</div>}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function StatusBadge({ result }: { result?: NormToolResult }) {
+  if (!result) return <span className="st pend" title="awaiting result">·</span>;
+  if (result.is_error) return <span className="st err" title="error"><Icons.alert size={12} />error</span>;
+  return <span className="st ok" title="ok"><Icons.check size={12} /></span>;
+}
+
+function statusTone(status: string): "ok" | "warn" | "err" | "muted" {
+  if (status === "completed" || status === "done") return "ok";
+  if (status === "in_progress" || status === "running" || status === "active") return "warn";
+  if (status === "cancelled" || status === "failed" || status === "error") return "err";
+  return "muted";
+}
+
+export interface TaskSnapshot {
+  id: string;
+  subject: string;
+  description: string;
+  activeForm: string;
+  status: string;
+}
+
+function statusIcon(status: string) {
+  if (status === "completed") return <Icons.check size={11} />;
+  if (status === "in_progress" || status === "running" || status === "active") return <Icons.dot size={9} />;
+  if (status === "cancelled" || status === "failed" || status === "error") return <Icons.close size={10} />;
+  return null;
+}
+
+export function TaskListPanel({ tasks, highlightId, defaultOpen = false }: { tasks: TaskSnapshot[]; highlightId?: string; defaultOpen?: boolean }) {
+  const [open, setOpen] = useState(defaultOpen);
+  if (!tasks.length) return null;
+  const done = tasks.filter(t => t.status === "completed").length;
+  const inProg = tasks.filter(t => t.status === "in_progress" || t.status === "running").length;
+  return (
+    <div className={"task-list " + (open ? "is-open" : "")}>
+      <button className="task-list-head" onClick={() => setOpen(o => !o)} type="button">
+        <Caret open={open} />
+        <span className="task-list-label">Task list</span>
+        <span className="task-list-progress tnum">{done}/{tasks.length} done</span>
+        {inProg > 0 ? <span className="task-list-running tnum">{inProg} running</span> : null}
+      </button>
+      {open ? (
+        <ol className="task-list-items">
+          {tasks.map(t => {
+            const tone = statusTone(t.status);
+            const isHi = !!highlightId && t.id === highlightId;
+            return (
+              <li key={t.id} className={"task-list-item tone-" + tone + (isHi ? " is-hi" : "")}>
+                <span className={"task-list-mark " + tone}>{statusIcon(t.status)}</span>
+                <span className="task-list-id mono">#{t.id}</span>
+                <div className="task-list-body">
+                  <div className="task-list-subject">{t.subject || <span className="task-list-untitled">(untitled)</span>}</div>
+                  {(t.status === "in_progress" || t.status === "running") && t.activeForm ? (
+                    <div className="task-list-sub">{t.activeForm}</div>
+                  ) : null}
+                </div>
+                <span className={"task-list-statuspill " + tone}>{(t.status || "pending").replace(/_/g, " ")}</span>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
+    </div>
+  );
+}
+
+export function TaskCreateCard({ block, result, tasks = [] }: { block: NormBlock; result?: NormToolResult; tasks?: TaskSnapshot[] }) {
+  const subject = (block.input?.subject as string) || (block.input?.title as string) || "";
+  const description = (block.input?.description as string) || "";
+  const activeForm = (block.input?.activeForm as string) || "";
+  const createdId = (() => {
+    if (!result) return undefined;
+    const text = typeof result.content === "string"
+      ? result.content
+      : Array.isArray(result.content)
+        ? result.content.map((b: any) => b?.text || "").join("\n")
+        : "";
+    const m = text.match(/Task\s*#(\d+)/i);
+    return m ? m[1] : undefined;
+  })();
+  return (
+    <div className="task-card create">
+      <div className="task-card-head">
+        <span className="task-card-ic accent"><Icons.plus size={13} /></span>
+        <span className="task-card-kind">Task created</span>
+        {createdId ? <span className="task-card-id mono">#{createdId}</span> : null}
+        <span className="task-card-status"><StatusBadge result={result} /></span>
+      </div>
+      {(subject || description || activeForm) ? (
+        <div className="task-card-body">
+          {subject ? <div className="task-card-subject">{subject}</div> : null}
+          {description ? <div className="task-card-desc">{description}</div> : null}
+          {activeForm ? <div className="task-card-active">{activeForm}</div> : null}
+        </div>
+      ) : null}
+      <TaskListPanel tasks={tasks} highlightId={createdId} />
+    </div>
+  );
+}
+
+export function TaskUpdateCard({ block, result, tasks = [] }: { block: NormBlock; result?: NormToolResult; tasks?: TaskSnapshot[] }) {
+  const raw = block.input?.taskId;
+  const taskId = raw !== undefined && raw !== null ? String(raw) : "";
+  const status = (block.input?.status as string) || "";
+  const tone = statusTone(status);
+  return (
+    <div className="task-card update">
+      <div className="task-card-head">
+        <span className={"task-card-ic " + tone}><Icons.tasks size={13} /></span>
+        <span className="task-card-kind">Task update</span>
+        {taskId ? <span className="task-card-id mono">#{taskId}</span> : null}
+        {status ? (
+          <>
+            <span className="task-arrow"><Icons.arrowRight size={11} /></span>
+            <span className={"task-card-statuspill " + tone}>{status.replace(/_/g, " ")}</span>
+          </>
+        ) : null}
+        <span className="task-card-status"><StatusBadge result={result} /></span>
+      </div>
+      <TaskListPanel tasks={tasks} highlightId={taskId} />
+    </div>
+  );
+}
+
+export function TaskGenericCard({ block, result, tasks = [], defaultOpen }: { block: NormBlock; result?: NormToolResult; tasks?: TaskSnapshot[]; defaultOpen?: boolean }) {
+  return (
+    <>
+      <ToolCard block={block} result={result} defaultOpen={defaultOpen} />
+      {tasks.length ? <TaskListPanel tasks={tasks} /> : null}
+    </>
+  );
+}
+
+interface AskQuestion {
+  question?: string;
+  header?: string;
+  multiSelect?: boolean;
+  options?: { label?: string; description?: string }[];
+}
+
+export function AskUserQuestionCard({ block, result }: { block: NormBlock; result?: NormToolResult }) {
+  const questions: AskQuestion[] = Array.isArray(block.input?.questions) ? (block.input!.questions as AskQuestion[]) : [];
+  const hasResult = !!result;
+  const isErr = !!result?.is_error;
+  const answerText = hasResult ? resultText(result.content) : "";
+  return (
+    <div className="ask-card">
+      <div className="ask-card-head">
+        <span className="ask-card-ic"><Icons.question size={14} /></span>
+        <span className="ask-card-label">Asked the user</span>
+        <span className="ask-card-status">
+          {!hasResult ? (
+            <span className="ask-card-pill warn">waiting…</span>
+          ) : isErr ? (
+            <span className="ask-card-pill err"><Icons.alert size={11} />error</span>
+          ) : (
+            <span className="ask-card-pill ok"><Icons.check size={11} />answered</span>
+          )}
+        </span>
+      </div>
+      <div className="ask-card-body">
+        {questions.map((q, i) => (
+          <div className="ask-q" key={i}>
+            <div className="ask-q-head">
+              {q.header ? <span className="ask-q-chip">{q.header}</span> : null}
+              <span className="ask-q-mode mono">{q.multiSelect ? "multi-select" : "single-select"}</span>
+            </div>
+            {q.question ? <div className="ask-q-text">{q.question}</div> : null}
+            {Array.isArray(q.options) && q.options.length ? (
+              <div className="ask-q-opts">
+                {q.options.map((o, j) => (
+                  <div className="ask-opt" key={j}>
+                    <span className={"ask-opt-mark " + (q.multiSelect ? "sq" : "ci")} />
+                    <div className="ask-opt-body">
+                      {o.label ? <div className="ask-opt-label">{o.label}</div> : null}
+                      {o.description ? <div className="ask-opt-desc">{o.description}</div> : null}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ))}
+        {hasResult && answerText ? (
+          <div className="ask-card-answer">
+            <div className="kv-label">user answered</div>
+            <CodeBlock code={answerText} max={240} />
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -296,12 +491,76 @@ export function isUserTaskNotification(msg: NormMsg): TaskNotificationData | nul
   return parseTaskNotification(txt);
 }
 
+interface ImgItem { key: string; src: string; alt: string; }
+
+const IMG_SRC_RE = /\[Image:\s*source:\s*(\/[^\]\n]+?\.(?:png|jpg|jpeg|gif|webp|bmp|svg))\s*\]/gi;
+
+function extractImagesFromText(text: string): { cleaned: string; items: ImgItem[] } {
+  const items: ImgItem[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  const re = new RegExp(IMG_SRC_RE.source, IMG_SRC_RE.flags);
+  while ((m = re.exec(text)) !== null) {
+    const p = m[1].trim();
+    if (seen.has(p)) continue;
+    seen.add(p);
+    items.push({ key: p, src: `/api/image?path=${encodeURIComponent(p)}`, alt: p.split("/").pop() || "image" });
+  }
+  const cleaned = text.replace(new RegExp(IMG_SRC_RE.source, IMG_SRC_RE.flags), "").replace(/\n{3,}/g, "\n\n").trim();
+  return { cleaned, items };
+}
+
+function Lightbox({ items, index, onClose, onIndex }: { items: ImgItem[]; index: number; onClose: () => void; onIndex: (i: number) => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      else if (items.length > 1 && e.key === "ArrowRight") onIndex((index + 1) % items.length);
+      else if (items.length > 1 && e.key === "ArrowLeft") onIndex((index - 1 + items.length) % items.length);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [index, items.length, onClose, onIndex]);
+  const it = items[index];
+  return createPortal(
+    <div className="lightbox" role="dialog" aria-modal="true" onClick={onClose}>
+      <button className="lightbox-close" onClick={onClose} aria-label="Close"><Icons.close size={18} /></button>
+      {items.length > 1 ? (
+        <>
+          <button className="lightbox-nav left" onClick={(e) => { e.stopPropagation(); onIndex((index - 1 + items.length) % items.length); }} aria-label="Previous">‹</button>
+          <button className="lightbox-nav right" onClick={(e) => { e.stopPropagation(); onIndex((index + 1) % items.length); }} aria-label="Next">›</button>
+          <div className="lightbox-count mono">{index + 1} / {items.length}</div>
+        </>
+      ) : null}
+      <img className="lightbox-img" src={it.src} alt={it.alt} onClick={(e) => e.stopPropagation()} />
+      {it.alt ? <div className="lightbox-caption mono">{it.alt}</div> : null}
+    </div>,
+    document.body
+  );
+}
+
+function ImageGallery({ items, onOpen }: { items: ImgItem[]; onOpen: (ix: number) => void }) {
+  if (!items.length) return null;
+  return (
+    <div className="img-gallery">
+      {items.map((it, i) => (
+        <button key={it.key + i} type="button" className="img-thumb" onClick={() => onOpen(i)} title={it.alt}>
+          <img src={it.src} loading="lazy" alt={it.alt} />
+          <span className="img-thumb-overlay"><Icons.zoomIn size={12} /></span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function UserBody({ msg }: { msg: NormMsg }) {
   const txt = msg.blocks.map(b => b.type === "text" ? (b.text || "") : "").join("\n");
   const cmd = txt.match(/<command-name>([^<]+)<\/command-name>/);
   const args = txt.match(/<command-args>([\s\S]*?)<\/command-args>/);
   const rootXml = !cmd && txt.trim().match(/^<([a-z0-9-]+)>([\s\S]*)<\/\1>\s*$/i);
-  const imgs = msg.blocks.filter(b => b.type === "image");
+
+  const hasText = msg.blocks.some(b => b.type === "text" && b.text?.trim());
+  if (!hasText && !cmd && !rootXml) return null;
+
   return (
     <>
       {cmd ? (
@@ -315,49 +574,107 @@ function UserBody({ msg }: { msg: NormMsg }) {
       ) : (
         <ClampBlock max={232}>
           <div className="user-bubble">
-            {msg.blocks.map((b, i) => b.type === "text" ? <Markdown key={i} text={b.text} /> :
-              b.type === "image" ? <div key={i} className="img-ph mono"><Icons.file size={14} /> image attachment</div> : null)}
+            {msg.blocks.map((b, i) => b.type === "text" && b.text?.trim() ? <Markdown key={i} text={b.text} /> : null)}
           </div>
         </ClampBlock>
       )}
-      {imgs.length && cmd ? <div className="img-ph mono"><Icons.file size={14} /> {imgs.length} image attachment(s)</div> : null}
     </>
   );
 }
 
-export function UserGroup({ msgs }: { msgs: NormMsg[] }) {
+export function UserGroup({ msgs, extraClass = "" }: { msgs: NormMsg[]; extraClass?: string }) {
+  const [lightboxIx, setLightboxIx] = useState<number | null>(null);
+
   if (msgs.length === 0) return null;
   const first = msgs[0];
+
+  // Pool images across all messages in the group, strip image markers, and
+  // (in a second pass) turn [Image #N] references into anchors keyed to the
+  // matching image by the trailing number in its filename. Two passes are
+  // needed because refs in part 1 can point at sources in part 2.
+  const items: ImgItem[] = [];
+  const numToIx = new Map<number, number>();
+  const cleanedMsgs: NormMsg[] = msgs.map((m, mi) => {
+    const newBlocks: NormBlock[] = [];
+    for (let i = 0; i < m.blocks.length; i++) {
+      const b = m.blocks[i];
+      if (b.type === "text") {
+        const r = extractImagesFromText(b.text || "");
+        for (const it of r.items) {
+          if (!items.find(x => x.key === it.key)) {
+            items.push(it);
+            const nm = it.key.match(/(\d+)\.(?:png|jpg|jpeg|gif|webp|bmp|svg)$/i);
+            if (nm) numToIx.set(parseInt(nm[1], 10), items.length - 1);
+          }
+        }
+        newBlocks.push({ ...b, text: r.cleaned });
+      } else if (b.type === "image" && b.source?.data) {
+        const key = `inline-${mi}-${i}`;
+        if (!items.find(x => x.key === key)) {
+          items.push({ key, src: `data:${b.source.media_type};base64,${b.source.data}`, alt: "pasted image" });
+        }
+      } else {
+        newBlocks.push(b);
+      }
+    }
+    return { ...m, blocks: newBlocks };
+  });
+  // pass 2: linkify with the now-complete numToIx
+  for (const m of cleanedMsgs) {
+    for (const b of m.blocks) {
+      if (b.type === "text" && b.text) {
+        b.text = b.text.replace(/\[Image\s+#(\d+)\]/g, (full, n) =>
+          numToIx.has(parseInt(n, 10)) ? `[Image #${n}](#image:${n})` : full
+        );
+      }
+    }
+  }
+
+  const onBlocksClick = (e: React.MouseEvent) => {
+    const a = (e.target as HTMLElement).closest('a[href^="#image:"]') as HTMLAnchorElement | null;
+    if (!a) return;
+    e.preventDefault();
+    const num = parseInt(a.getAttribute("href")!.replace("#image:", ""), 10);
+    const ix = numToIx.get(num);
+    if (ix !== undefined) setLightboxIx(ix);
+  };
+
   return (
-    <div className="msg user fade-in">
+    <div className={"msg user " + (extraClass || "fade-in")}>
       <div className="msg-gutter">
-        <span className="role-dot user-dot"><Icons.user size={13} /></span>
+        <span className="gutter-anchor">
+          <span className="role-dot user-dot"><Icons.user size={13} /></span>
+          <span className="gutter-label">You</span>
+        </span>
         {msgs.length > 1 ? <span className="gutter-line" /> : null}
       </div>
       <div className="msg-main">
         <div className="msg-head">
-          <span className="role-name">You</span>
           <span className="msg-time">{fmtTime(first.ts)}</span>
           {msgs.length > 1 ? <span className="user-group-tag">{msgs.length} parts</span> : null}
         </div>
-        <div className="msg-blocks">
-          {msgs.map((m, i) => <UserBody key={m.uuid || i} msg={m} />)}
+        <div className="msg-blocks" onClick={onBlocksClick}>
+          {cleanedMsgs.map((m, i) => <UserBody key={m.uuid || i} msg={m} />)}
+          {items.length ? <ImageGallery items={items} onOpen={setLightboxIx} /> : null}
         </div>
       </div>
+      {lightboxIx !== null ? (
+        <Lightbox items={items} index={lightboxIx} onClose={() => setLightboxIx(null)} onIndex={setLightboxIx} />
+      ) : null}
     </div>
   );
 }
 
-export function UserMessage({ msg, agentsByToolUse, onOpenAgent }: { msg: NormMsg; agentsByToolUse: Record<string, NormAgent>; onOpenAgent: (id: string) => void }) {
+export function UserMessage({ msg, agentsByToolUse, onOpenAgent, extraClass = "" }: { msg: NormMsg; agentsByToolUse: Record<string, NormAgent>; onOpenAgent: (id: string) => void; extraClass?: string }) {
   const tn = isUserTaskNotification(msg);
   if (tn) {
     const agent = agentsByToolUse[tn.toolUseId];
     return (
-      <div className="msg sysrow fade-in">
+      <div className={"msg sysrow " + (extraClass || "fade-in")}>
         <TaskNotificationCard data={tn} agent={agent} onOpen={onOpenAgent} ts={msg.ts} />
       </div>
     );
   }
-  return <UserGroup msgs={[msg]} />;
+  return <UserGroup msgs={[msg]} extraClass={extraClass} />;
 }
 

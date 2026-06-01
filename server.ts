@@ -10,6 +10,42 @@ app.use(cors());
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), ".claude");
 const PROJECTS_DIR = path.join(CLAUDE_DIR, "projects");
 
+const IMAGE_MIME: Record<string, string> = {
+  ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".gif": "image/gif",
+  ".webp": "image/webp",
+  ".svg": "image/svg+xml",
+  ".bmp": "image/bmp",
+};
+
+app.get("/api/image", (req, res) => {
+  try {
+    const raw = String(req.query.path || "");
+    if (!raw) { res.status(400).end(); return; }
+    // The trace file stores the host's absolute path (e.g. /Users/<user>/.claude/...),
+    // but inside a container CLAUDE_DIR points to a mounted copy. Normalize the
+    // request to a path that is relative to whatever CLAUDE_DIR is here.
+    const marker = "/.claude/";
+    const ix = raw.indexOf(marker);
+    const rel = ix >= 0 ? raw.slice(ix + marker.length) : raw.replace(/^\/+/, "");
+    const abs = path.resolve(CLAUDE_DIR, rel);
+    const within = path.relative(CLAUDE_DIR, abs);
+    if (within.startsWith("..") || path.isAbsolute(within)) { res.status(403).end(); return; }
+    const mime = IMAGE_MIME[path.extname(abs).toLowerCase()];
+    if (!mime) { res.status(415).end(); return; }
+    fs.stat(abs, (err, stat) => {
+      if (err || !stat.isFile()) { res.status(404).end(); return; }
+      res.setHeader("Content-Type", mime);
+      res.setHeader("Cache-Control", "public, max-age=86400, immutable");
+      fs.createReadStream(abs).pipe(res);
+    });
+  } catch {
+    res.status(500).end();
+  }
+});
+
 app.get("/api/projects", (_req, res) => {
   try {
     const projects = fs.readdirSync(PROJECTS_DIR)

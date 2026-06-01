@@ -14,18 +14,19 @@ export interface Usage { input: number; output: number; cw: number; cr: number; 
 
 export function UsageChips({ u, compact = false }: { u?: Usage; compact?: boolean }) {
   if (!u) return null;
-  const items: Array<[string, number, string]> = [
-    ["in", u.input, "var(--tx-2)"],
-    ["out", u.output, "var(--tx-1)"],
-    ["cache+", u.cw, "var(--warn)"],
-    ["cache→", u.cr, "var(--sonnet)"],
+  const items: Array<{ k: string; v: number; cls: string }> = [
+    { k: "in",     v: u.input,  cls: "in" },
+    { k: "out",    v: u.output, cls: "out" },
+    { k: "cache+", v: u.cw,     cls: "cw" },
+    { k: "cache→", v: u.cr,     cls: "cr" },
   ];
-  const filtered = items.filter(([, v]) => v > 0);
+  const filtered = items.filter(it => it.v > 0);
   return (
-    <span style={{ display: "inline-flex", gap: compact ? 6 : 8, alignItems: "center", flexWrap: "wrap" }}>
-      {filtered.map(([k, v, c]) => (
-        <span key={k} className="mono tnum" style={{ fontSize: 11, color: "var(--tx-2)" }}>
-          <span style={{ color: c, opacity: 0.85 }}>{k}</span>&nbsp;{fmtTokens(v)}
+    <span className={"usage-chips " + (compact ? "is-compact" : "")}>
+      {filtered.map(it => (
+        <span key={it.k} className={"uc " + it.cls}>
+          <span className="uc-k">{it.k}</span>
+          <span className="uc-v tnum">{fmtTokens(it.v)}</span>
         </span>
       ))}
     </span>
@@ -94,12 +95,29 @@ function mdInline(s: string): string {
   return h;
 }
 
+type Align = "left" | "center" | "right";
 type MdBlock =
   | { t: "code"; lang: string; body: string; key: number }
   | { t: "h"; lvl: number; body: string; key: number }
   | { t: "list"; items: { ordered: boolean; body: string }[]; key: number }
   | { t: "hr"; key: number }
+  | { t: "table"; head: string[]; rows: string[][]; align: Align[]; key: number }
   | { t: "p"; body: string; key: number };
+
+function splitRow(line: string): string[] {
+  const t = line.trim().replace(/^\||\|$/g, "");
+  return t.split("|").map(c => c.trim());
+}
+
+function parseAlign(sep: string[]): Align[] {
+  return sep.map(c => {
+    const left = c.startsWith(":");
+    const right = c.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    return "left";
+  });
+}
 
 export function Markdown({ text }: { text?: string }) {
   const blocks = useMemo<MdBlock[]>(() => {
@@ -131,10 +149,27 @@ export function Markdown({ text }: { text?: string }) {
         continue;
       }
       if (/^\s*(---|___|\*\*\*)\s*$/.test(ln)) { out.push({ t: "hr", key: key++ }); i++; continue; }
+      if (
+        /^\s*\|.*\|\s*$/.test(ln) &&
+        i + 1 < lines.length &&
+        /^\s*\|[\s\-:|]+\|\s*$/.test(lines[i + 1]) &&
+        /-/.test(lines[i + 1])
+      ) {
+        const head = splitRow(ln);
+        const align = parseAlign(splitRow(lines[i + 1]));
+        i += 2;
+        const rows: string[][] = [];
+        while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) {
+          rows.push(splitRow(lines[i]));
+          i++;
+        }
+        out.push({ t: "table", head, rows, align, key: key++ });
+        continue;
+      }
       if (ln.trim() === "") { i++; continue; }
       const buf = [ln];
       i++;
-      while (i < lines.length && lines[i].trim() !== "" && !/^(#{1,4}\s|```|\s*[-*]\s|\s*\d+\.\s)/.test(lines[i])) {
+      while (i < lines.length && lines[i].trim() !== "" && !/^(#{1,4}\s|```|\s*[-*]\s|\s*\d+\.\s|\s*\|)/.test(lines[i])) {
         buf.push(lines[i]);
         i++;
       }
@@ -156,6 +191,28 @@ export function Markdown({ text }: { text?: string }) {
           <ul key={b.key} className="md-list">
             {b.items.map((it, j) => <li key={j} dangerouslySetInnerHTML={{ __html: mdInline(it.body) }} />)}
           </ul>
+        );
+        if (b.t === "table") return (
+          <div key={b.key} className="md-table-wrap">
+            <table className="md-table">
+              <thead>
+                <tr>
+                  {b.head.map((h, j) => (
+                    <th key={j} style={{ textAlign: b.align[j] || "left" }} dangerouslySetInnerHTML={{ __html: mdInline(h) }} />
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {b.rows.map((r, j) => (
+                  <tr key={j}>
+                    {r.map((c, k) => (
+                      <td key={k} style={{ textAlign: b.align[k] || "left" }} dangerouslySetInnerHTML={{ __html: mdInline(c) }} />
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         );
         return <p key={b.key} className="md-p" dangerouslySetInnerHTML={{ __html: mdInline(b.body) }} />;
       })}
