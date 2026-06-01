@@ -9,6 +9,7 @@ export interface NormBlock {
   id?: string;
   name?: string;
   input?: Record<string, any>;
+  source?: { type: string; media_type: string; data: string };
 }
 
 export interface NormMsg {
@@ -152,7 +153,7 @@ function blockify(content: ContentBlock[]): NormBlock[] {
     if (b.type === "text" && b.text) out.push({ type: "text", text: b.text });
     else if (b.type === "thinking" && b.thinking) out.push({ type: "thinking", thinking: b.thinking });
     else if (b.type === "tool_use") out.push({ type: "tool_use", id: b.id, name: b.name, input: b.input });
-    else if (b.type === "image") out.push({ type: "image" });
+    else if (b.type === "image") out.push({ type: "image", source: b.source });
   }
   return out;
 }

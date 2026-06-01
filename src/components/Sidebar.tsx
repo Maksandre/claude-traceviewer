@@ -155,7 +155,10 @@ export function Sidebar({
   const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState<Record<string, boolean>>(() => ({ [selectedProject || ""]: true }));
 
-  const projectNodes = useMemo(() => projects.map(decodeProject), [projects]);
+  const projectNodes = useMemo(
+    () => projects.map(decodeProject).filter(p => p.sessionCount > 0),
+    [projects]
+  );
   const sessionsForSelected = sessions;
 
   const filtered = useMemo(() => {
@@ -235,7 +238,7 @@ export function Sidebar({
       </div>
 
       <div className="side-foot">
-        <div className="meta-line"><span>{projects.length} projects</span><b>{sessionsForSelected.length} sessions</b></div>
+        <div className="meta-line"><span>{projectNodes.length} projects</span><b>{sessionsForSelected.length} sessions</b></div>
         {selectedProject && sessionsForSelected.length > 0 ? (
           <div className="meta-line">
             <span>actions</span>

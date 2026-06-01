@@ -54,6 +54,8 @@ export const Icons = {
   tasks: (p: IconProps = {}) => <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2.5" /><path d="M8 12l2.5 2.5L16 9" /></Svg>,
   question: (p: IconProps = {}) => <Svg {...p}><circle cx="12" cy="12" r="9" /><path d="M9.5 9a2.5 2.5 0 1 1 3.6 2.3c-.7.3-1.1.9-1.1 1.7v.5" /><path d="M12 17h.01" /></Svg>,
   plus: (p: IconProps = {}) => <Svg {...p}><path d="M12 5v14M5 12h14" /></Svg>,
+  image: (p: IconProps = {}) => <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2.5" /><circle cx="9" cy="10" r="1.6" /><path d="M3 17l5-5 4 4 3-3 6 6" /></Svg>,
+  zoomIn: (p: IconProps = {}) => <Svg {...p}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3M11 8v6M8 11h6" /></Svg>,
 };
 
 export function toolIcon(name?: string | null) {

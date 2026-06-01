@@ -256,8 +256,7 @@ function App() {
                 </div>
                 <div className="empty-hero-stats">
                   <span><b>{projects.length}</b> projects</span>
-                  {selectedProject ? <span><b>{sessions.length}</b> sessions</span> : null}
-                  <span>~/.claude</span>
+                  <span><b>{projects.reduce((a, p) => a + (p.sessionCount || 0), 0)}</b> sessions</span>
                 </div>
               </div>
             </div>

@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
 import { Icons, toolIcon } from "../../lib/icons";
 import { agentColor, agentMeta, fmtCost, fmtDur, fmtTime, fmtTokens, modelColor, modelLabel } from "../../lib/format";
 import { Caret, ClampBlock, CodeBlock, Markdown, MoreButton } from "../../lib/md";
@@ -490,12 +491,76 @@ export function isUserTaskNotification(msg: NormMsg): TaskNotificationData | nul
   return parseTaskNotification(txt);
 }
 
+interface ImgItem { key: string; src: string; alt: string; }
+
+const IMG_SRC_RE = /\[Image:\s*source:\s*(\/[^\]\n]+?\.(?:png|jpg|jpeg|gif|webp|bmp|svg))\s*\]/gi;
+
+function extractImagesFromText(text: string): { cleaned: string; items: ImgItem[] } {
+  const items: ImgItem[] = [];
+  const seen = new Set<string>();
+  let m: RegExpExecArray | null;
+  const re = new RegExp(IMG_SRC_RE.source, IMG_SRC_RE.flags);
+  while ((m = re.exec(text)) !== null) {
+    const p = m[1].trim();
+    if (seen.has(p)) continue;
+    seen.add(p);
+    items.push({ key: p, src: `/api/image?path=${encodeURIComponent(p)}`, alt: p.split("/").pop() || "image" });
+  }
+  const cleaned = text.replace(new RegExp(IMG_SRC_RE.source, IMG_SRC_RE.flags), "").replace(/\n{3,}/g, "\n\n").trim();
+  return { cleaned, items };
+}
+
+function Lightbox({ items, index, onClose, onIndex }: { items: ImgItem[]; index: number; onClose: () => void; onIndex: (i: number) => void }) {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+      else if (items.length > 1 && e.key === "ArrowRight") onIndex((index + 1) % items.length);
+      else if (items.length > 1 && e.key === "ArrowLeft") onIndex((index - 1 + items.length) % items.length);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [index, items.length, onClose, onIndex]);
+  const it = items[index];
+  return createPortal(
+    <div className="lightbox" role="dialog" aria-modal="true" onClick={onClose}>
+      <button className="lightbox-close" onClick={onClose} aria-label="Close"><Icons.close size={18} /></button>
+      {items.length > 1 ? (
+        <>
+          <button className="lightbox-nav left" onClick={(e) => { e.stopPropagation(); onIndex((index - 1 + items.length) % items.length); }} aria-label="Previous">‹</button>
+          <button className="lightbox-nav right" onClick={(e) => { e.stopPropagation(); onIndex((index + 1) % items.length); }} aria-label="Next">›</button>
+          <div className="lightbox-count mono">{index + 1} / {items.length}</div>
+        </>
+      ) : null}
+      <img className="lightbox-img" src={it.src} alt={it.alt} onClick={(e) => e.stopPropagation()} />
+      {it.alt ? <div className="lightbox-caption mono">{it.alt}</div> : null}
+    </div>,
+    document.body
+  );
+}
+
+function ImageGallery({ items, onOpen }: { items: ImgItem[]; onOpen: (ix: number) => void }) {
+  if (!items.length) return null;
+  return (
+    <div className="img-gallery">
+      {items.map((it, i) => (
+        <button key={it.key + i} type="button" className="img-thumb" onClick={() => onOpen(i)} title={it.alt}>
+          <img src={it.src} loading="lazy" alt={it.alt} />
+          <span className="img-thumb-overlay"><Icons.zoomIn size={12} /></span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function UserBody({ msg }: { msg: NormMsg }) {
   const txt = msg.blocks.map(b => b.type === "text" ? (b.text || "") : "").join("\n");
   const cmd = txt.match(/<command-name>([^<]+)<\/command-name>/);
   const args = txt.match(/<command-args>([\s\S]*?)<\/command-args>/);
   const rootXml = !cmd && txt.trim().match(/^<([a-z0-9-]+)>([\s\S]*)<\/\1>\s*$/i);
-  const imgs = msg.blocks.filter(b => b.type === "image");
+
+  const hasText = msg.blocks.some(b => b.type === "text" && b.text?.trim());
+  if (!hasText && !cmd && !rootXml) return null;
+
   return (
     <>
       {cmd ? (
@@ -509,19 +574,71 @@ function UserBody({ msg }: { msg: NormMsg }) {
       ) : (
         <ClampBlock max={232}>
           <div className="user-bubble">
-            {msg.blocks.map((b, i) => b.type === "text" ? <Markdown key={i} text={b.text} /> :
-              b.type === "image" ? <div key={i} className="img-ph mono"><Icons.file size={14} /> image attachment</div> : null)}
+            {msg.blocks.map((b, i) => b.type === "text" && b.text?.trim() ? <Markdown key={i} text={b.text} /> : null)}
           </div>
         </ClampBlock>
       )}
-      {imgs.length && cmd ? <div className="img-ph mono"><Icons.file size={14} /> {imgs.length} image attachment(s)</div> : null}
     </>
   );
 }
 
 export function UserGroup({ msgs, extraClass = "" }: { msgs: NormMsg[]; extraClass?: string }) {
+  const [lightboxIx, setLightboxIx] = useState<number | null>(null);
+
   if (msgs.length === 0) return null;
   const first = msgs[0];
+
+  // Pool images across all messages in the group, strip image markers, and
+  // (in a second pass) turn [Image #N] references into anchors keyed to the
+  // matching image by the trailing number in its filename. Two passes are
+  // needed because refs in part 1 can point at sources in part 2.
+  const items: ImgItem[] = [];
+  const numToIx = new Map<number, number>();
+  const cleanedMsgs: NormMsg[] = msgs.map((m, mi) => {
+    const newBlocks: NormBlock[] = [];
+    for (let i = 0; i < m.blocks.length; i++) {
+      const b = m.blocks[i];
+      if (b.type === "text") {
+        const r = extractImagesFromText(b.text || "");
+        for (const it of r.items) {
+          if (!items.find(x => x.key === it.key)) {
+            items.push(it);
+            const nm = it.key.match(/(\d+)\.(?:png|jpg|jpeg|gif|webp|bmp|svg)$/i);
+            if (nm) numToIx.set(parseInt(nm[1], 10), items.length - 1);
+          }
+        }
+        newBlocks.push({ ...b, text: r.cleaned });
+      } else if (b.type === "image" && b.source?.data) {
+        const key = `inline-${mi}-${i}`;
+        if (!items.find(x => x.key === key)) {
+          items.push({ key, src: `data:${b.source.media_type};base64,${b.source.data}`, alt: "pasted image" });
+        }
+      } else {
+        newBlocks.push(b);
+      }
+    }
+    return { ...m, blocks: newBlocks };
+  });
+  // pass 2: linkify with the now-complete numToIx
+  for (const m of cleanedMsgs) {
+    for (const b of m.blocks) {
+      if (b.type === "text" && b.text) {
+        b.text = b.text.replace(/\[Image\s+#(\d+)\]/g, (full, n) =>
+          numToIx.has(parseInt(n, 10)) ? `[Image #${n}](#image:${n})` : full
+        );
+      }
+    }
+  }
+
+  const onBlocksClick = (e: React.MouseEvent) => {
+    const a = (e.target as HTMLElement).closest('a[href^="#image:"]') as HTMLAnchorElement | null;
+    if (!a) return;
+    e.preventDefault();
+    const num = parseInt(a.getAttribute("href")!.replace("#image:", ""), 10);
+    const ix = numToIx.get(num);
+    if (ix !== undefined) setLightboxIx(ix);
+  };
+
   return (
     <div className={"msg user " + (extraClass || "fade-in")}>
       <div className="msg-gutter">
@@ -534,10 +651,14 @@ export function UserGroup({ msgs, extraClass = "" }: { msgs: NormMsg[]; extraCla
           <span className="msg-time">{fmtTime(first.ts)}</span>
           {msgs.length > 1 ? <span className="user-group-tag">{msgs.length} parts</span> : null}
         </div>
-        <div className="msg-blocks">
-          {msgs.map((m, i) => <UserBody key={m.uuid || i} msg={m} />)}
+        <div className="msg-blocks" onClick={onBlocksClick}>
+          {cleanedMsgs.map((m, i) => <UserBody key={m.uuid || i} msg={m} />)}
+          {items.length ? <ImageGallery items={items} onOpen={setLightboxIx} /> : null}
         </div>
       </div>
+      {lightboxIx !== null ? (
+        <Lightbox items={items} index={lightboxIx} onClose={() => setLightboxIx(null)} onIndex={setLightboxIx} />
+      ) : null}
     </div>
   );
 }
