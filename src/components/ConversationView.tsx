@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import type { NormAgent, NormTrace } from "../lib/normalize";
 import { fmtCost, fmtDur, modelColor, modelLabel } from "../lib/format";
@@ -18,6 +18,8 @@ interface Props {
   onOpenAgent: (id: string) => void;
   settings: ViewSettings;
   live: boolean;
+  targetMsg?: string | null;
+  targetBlock?: string | null;
 }
 
 function ConvHeader({ trace }: { trace: NormTrace }) {
@@ -59,7 +61,7 @@ function ConvHeader({ trace }: { trace: NormTrace }) {
   );
 }
 
-export function ConversationView({ trace, query, onOpenAgent, settings, live }: Props) {
+export function ConversationView({ trace, query, onOpenAgent, settings, live, targetMsg, targetBlock }: Props) {
   // Stable per-trace so the search index doesn't tear down on every render.
   const agentsByToolUse = useMemo(() => {
     const m: Record<string, NormAgent> = {};
@@ -89,8 +91,94 @@ export function ConversationView({ trace, query, onOpenAgent, settings, live }: 
     virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" });
   }, []);
 
+  // Walk every msg in every group so links targeting the 2nd part of a
+  // multi-step asst turn (or part N of a bundled user group) still resolve.
+  const targetIndex = useMemo(() => {
+    if (!targetMsg) return -1;
+    for (let i = 0; i < filtered.length; i++) {
+      const g = filtered[i];
+      if (g.key === targetMsg) return i;
+      if (g.msg?.uuid === targetMsg) return i;
+      if (g.msgs?.some(m => m.uuid === targetMsg)) return i;
+    }
+    return -1;
+  }, [targetMsg, filtered]);
+
+  // Block deep-links flash just the block, not the whole row — the row
+  // may be many screens tall and flashing it all is more distracting
+  // than helpful. A ref-gate means we only auto-scroll once per unique
+  // (msg, block) pair: poll-driven re-renders won't yank the user back.
+  // The URL stays set so the address bar is shareable.
+  const [highlightKey, setHighlightKey] = useState<string | null>(null);
+  const lastScrolledRef = useRef<string>("");
+  useEffect(() => {
+    if (!targetMsg || targetIndex < 0) return;
+    const key = `${targetMsg}|${targetBlock ?? ""}`;
+    if (lastScrolledRef.current === key) return;
+    lastScrolledRef.current = key;
+
+    const groupKey = filtered[targetIndex].key;
+    const wantsBlock = !!targetBlock;
+    let cancelled = false;
+    let raf = 0;
+    let clearHighlightT = 0;
+    let clearBlockT = 0;
+    const root = containerRef.current;
+
+    // Fast path: block is already in the DOM (e.g. user clicked a
+    // permalink while looking at the block, or the row was already on
+    // screen). Skip the Virtuoso scrollToIndex jolt — go straight to
+    // the block.
+    if (wantsBlock && root) {
+      const sel = `[data-block-id="${CSS.escape(targetBlock!)}"]`;
+      const el = root.querySelector<HTMLElement>(sel);
+      if (el) {
+        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        el.classList.add("is-target");
+        clearBlockT = window.setTimeout(() => el.classList.remove("is-target"), 2400);
+        return () => { window.clearTimeout(clearBlockT); };
+      }
+    }
+
+    // Slow path: row not mounted yet (initial deep-link load on a long
+    // transcript). Scroll the row in via Virtuoso, then poll for the
+    // block element and finalize.
+    const scrollT = window.setTimeout(() => {
+      if (cancelled) return;
+      virtuosoRef.current?.scrollToIndex({ index: targetIndex, align: "start", behavior: "smooth" });
+      if (!wantsBlock) {
+        setHighlightKey(groupKey);
+        clearHighlightT = window.setTimeout(() => setHighlightKey(null), 2400);
+        return;
+      }
+      if (!root) return;
+      const sel = `[data-block-id="${CSS.escape(targetBlock!)}"]`;
+      let attempts = 0;
+      const tryFind = () => {
+        if (cancelled) return;
+        const el = root.querySelector<HTMLElement>(sel);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "start" });
+          el.classList.add("is-target");
+          clearBlockT = window.setTimeout(() => el.classList.remove("is-target"), 2400);
+          return;
+        }
+        if (++attempts > 90) return;
+        raf = window.requestAnimationFrame(tryFind);
+      };
+      window.setTimeout(tryFind, 80);
+    }, 60);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(scrollT);
+      if (clearHighlightT) window.clearTimeout(clearHighlightT);
+      if (clearBlockT) window.clearTimeout(clearBlockT);
+      if (raf) window.cancelAnimationFrame(raf);
+    };
+  }, [targetMsg, targetBlock, targetIndex, filtered]);
+
   const renderItem = useCallback((_index: number, g: typeof filtered[number]) => (
-    <div className="conv-row">
+    <div className={"conv-row " + (highlightKey === g.key ? "is-target" : "")}>
       <GroupRow
         g={g}
         model={model}
@@ -100,7 +188,7 @@ export function ConversationView({ trace, query, onOpenAgent, settings, live }: 
         query={query}
       />
     </div>
-  ), [model, agentsByToolUse, onOpenAgent, settings, query]);
+  ), [model, agentsByToolUse, onOpenAgent, settings, query, highlightKey]);
 
   const Header = useCallback(() => (
     <div className="conv-row conv-row-header">

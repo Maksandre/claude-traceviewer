@@ -8,6 +8,7 @@ import { StatsView } from "./components/StatsView";
 import { AgentDrawer } from "./components/AgentDrawer";
 import type { ProjectMeta, SessionInfo, TraceRecord } from "./types";
 import { fetchNormalizedTrace, type NormTrace } from "./lib/normalize";
+import { PermalinkContext } from "./lib/permalinkCtx";
 import "./App.css";
 
 export type ViewKey = "conversation" | "agents" | "stats";
@@ -21,13 +22,15 @@ function readInitialTheme(): Theme {
 }
 
 function readInitialFromUrl() {
-  if (typeof window === "undefined") return { project: null, session: null, view: "conversation" as ViewKey };
+  if (typeof window === "undefined") return { project: null, session: null, view: "conversation" as ViewKey, msg: null, block: null };
   const params = new URLSearchParams(window.location.search);
   const view = params.get("view");
   return {
     project: params.get("project"),
     session: params.get("session"),
     view: (view === "agents" || view === "stats" || view === "conversation" ? view : "conversation") as ViewKey,
+    msg: params.get("msg"),
+    block: params.get("block"),
   };
 }
 
@@ -47,6 +50,18 @@ function App() {
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const [drawerId, setDrawerId] = useState<string | null>(null);
+  // `targetMsg` / `targetBlock` track the active deep-link target. The
+  // URL effect mirrors them into ?msg=&block= so the URL bar always
+  // reflects what's selected. ConversationView ref-gates the actual
+  // scroll-flash to once per (msg, block) pair so polling doesn't
+  // re-trigger it.
+  const [targetMsg, setTargetMsg] = useState<string | null>(initial.msg);
+  const [targetBlock, setTargetBlock] = useState<string | null>(initial.block);
+  const selectTarget = useCallback((msg: string, block: string | null) => {
+    setTargetMsg(msg);
+    setTargetBlock(block);
+  }, []);
+  const permalinkApi = useMemo(() => ({ selectTarget }), [selectTarget]);
   const [query, setQuery] = useState("");
   // Search runs when the user presses Enter in the Toolbar. We wrap the
   // state update in a transition so React can keep the input painted while
@@ -103,12 +118,14 @@ function App() {
     if (selectedProject) params.set("project", selectedProject);
     if (selectedSession) params.set("session", selectedSession);
     if (view !== "conversation") params.set("view", view);
+    if (targetMsg) params.set("msg", targetMsg);
+    if (targetBlock) params.set("block", targetBlock);
     const qs = params.toString();
     const next = qs ? `?${qs}` : window.location.pathname;
     if (window.location.search !== (qs ? `?${qs}` : "")) {
       window.history.replaceState(null, "", next);
     }
-  }, [selectedProject, selectedSession, view]);
+  }, [selectedProject, selectedSession, view, targetMsg, targetBlock]);
 
   // Tolerate both old (string[]) and new ({name,sessionCount,mtime}[]) API shapes
   // so a stale dev server doesn't blank the page on hot-reload.
@@ -208,6 +225,7 @@ function App() {
   const hasSession = !!selectedSession;
 
   return (
+    <PermalinkContext.Provider value={permalinkApi}>
     <div
       className={"app " + (sidebarOpen ? "" : "no-sidebar") + (resizing ? " resizing" : "")}
       style={{ "--sidebar-w": sidebarOpen ? `${sidebarW}px` : "0px" } as React.CSSProperties}
@@ -215,10 +233,10 @@ function App() {
       <Sidebar
         projects={projects}
         selectedProject={selectedProject}
-        onSelectProject={(p) => { setSelectedProject(p); setSelectedSession(null); setRecords([]); }}
+        onSelectProject={(p) => { setSelectedProject(p); setSelectedSession(null); setRecords([]); setTargetMsg(null); setTargetBlock(null); }}
         sessions={sessions}
         selectedSession={selectedSession}
-        onSelectSession={setSelectedSession}
+        onSelectSession={(s) => { setSelectedSession(s); setTargetMsg(null); setTargetBlock(null); }}
         onDeleteSession={(id) => {
           fetch(`/api/projects/${encodeURIComponent(selectedProject!)}/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
             .then(() => {
@@ -279,7 +297,7 @@ function App() {
           ) : !trace ? (
             <div className="empty-state"><div>Loading trace…</div></div>
           ) : view === "conversation" ? (
-            <ConversationView trace={trace} query={effectiveQuery} onOpenAgent={setDrawerId} settings={settings} live={isWorking} />
+            <ConversationView trace={trace} query={effectiveQuery} onOpenAgent={setDrawerId} settings={settings} live={isWorking} targetMsg={targetMsg} targetBlock={targetBlock} />
           ) : view === "agents" ? (
             <AgentsView
               trace={trace}
@@ -300,6 +318,7 @@ function App() {
         onClose={() => setDrawerId(null)}
       />
     </div>
+    </PermalinkContext.Provider>
   );
 }
 

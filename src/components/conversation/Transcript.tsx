@@ -3,7 +3,22 @@ import { agentMeta, fmtCost, fmtDur, fmtTime, modelColor, modelFamily, modelLabe
 import { Icons } from "../../lib/icons";
 import { Caret, UsageChips } from "../../lib/md";
 import type { NormAgent, NormBlock, NormMsg, NormToolResult } from "../../lib/normalize";
-import { AskUserQuestionCard, TaskCreateCard, TaskGenericCard, TaskUpdateCard, ThinkingBlock, ToolCard, UserGroup, UserMessage, isUserTaskNotification, type TaskSnapshot } from "./blocks";
+import { AskUserQuestionCard, BlockAnchor, MsgPermalink, TaskCreateCard, TaskGenericCard, TaskUpdateCard, ThinkingBlock, ToolCard, UserGroup, UserMessage, isUserTaskNotification, type TaskSnapshot } from "./blocks";
+
+// Each entry carries the source msg's uuid + the block's index inside
+// that msg. We need both so non-tool blocks (text/thinking — which have
+// no stable id) get a deterministic `<msg-uuid>:<index>` block id.
+interface BlockEntry { b: NormBlock; msgUuid: string; idxInMsg: number; }
+
+function entityLabelFor(b: NormBlock): string {
+  if (b.type === "text") return "text block";
+  if (b.type === "thinking") return "thinking block";
+  if (b.type === "tool_use") {
+    if (b.name === "Agent" || b.name === "Task") return "subagent spawn";
+    return `${b.name || "tool"} call`;
+  }
+  return "block";
+}
 
 export interface ViewSettings { expandThinking: boolean; expandTools: boolean; }
 
@@ -89,8 +104,8 @@ function blockMatchesQuery(
   return false;
 }
 
-function Blocks({ blocks, getResult, agentsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents }: {
-  blocks: NormBlock[];
+function Blocks({ entries, getResult, agentsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, permalinks = true }: {
+  entries: BlockEntry[];
   getResult: (id: string) => NormToolResult | undefined;
   agentsByToolUse: Record<string, NormAgent>;
   onOpenAgent: (id: string) => void;
@@ -98,31 +113,44 @@ function Blocks({ blocks, getResult, agentsByToolUse, onOpenAgent, settings, tas
   taskStateById: Map<string, TaskSnapshot[]>;
   query?: string;
   forceExpandedAgents?: Set<string>;
+  permalinks?: boolean;
 }) {
   const q = (query || "").trim().toLowerCase();
   const showAll = q.length < 3;
   let hidden = 0;
   const rendered: React.ReactNode[] = [];
-  blocks.forEach((b, i) => {
+  // Wraps each rendered block with the hover-revealed permalink. Subagent
+  // transcripts pass permalinks={false}: the URLs they'd produce can't be
+  // resolved by the main-view scroll lookup yet.
+  const wrap = (key: number | string, b: NormBlock, msgUuid: string, idxInMsg: number, node: React.ReactNode): React.ReactNode => {
+    if (!permalinks) return <div key={key}>{node}</div>;
+    const blockId = b.id || `${msgUuid}:${idxInMsg}`;
+    return (
+      <BlockAnchor key={key} msgKey={msgUuid} blockId={blockId} entityLabel={entityLabelFor(b)}>
+        {node}
+      </BlockAnchor>
+    );
+  };
+  entries.forEach((entry, i) => {
+    const { b, msgUuid, idxInMsg } = entry;
     if (!showAll && !blockMatchesQuery(b, getResult, agentsByToolUse, forceExpandedAgents, q)) {
       hidden++;
       return;
     }
     if (b.type === "text") {
-      if (b.text?.trim()) rendered.push(<div className="blk text" key={i}><div className="md"><Markdown text={b.text} /></div></div>);
+      if (b.text?.trim()) rendered.push(wrap(i, b, msgUuid, idxInMsg, <div className="blk text"><div className="md"><Markdown text={b.text} /></div></div>));
       return;
     }
     if (b.type === "thinking") {
-      rendered.push(<ThinkingBlock key={i} text={b.thinking || ""} defaultOpen={settings.expandThinking} />);
+      rendered.push(wrap(i, b, msgUuid, idxInMsg, <ThinkingBlock text={b.thinking || ""} defaultOpen={settings.expandThinking} />));
       return;
     }
     if (b.type === "tool_use") {
       if (b.name === "Agent" || b.name === "Task") {
         const agent = b.id ? agentsByToolUse[b.id] : undefined;
         const force = !!(agent && forceExpandedAgents?.has(agent.id));
-        rendered.push(
+        rendered.push(wrap(i, b, msgUuid, idxInMsg,
           <AgentSpawnCard
-            key={i}
             block={b}
             agent={agent}
             onOpen={onOpenAgent}
@@ -130,15 +158,15 @@ function Blocks({ blocks, getResult, agentsByToolUse, onOpenAgent, settings, tas
             query={query}
             forceExpanded={force}
           />,
-        );
+        ));
         return;
       }
       const tasks = b.id ? taskStateById.get(b.id) || [] : [];
-      if (b.name === "TaskCreate") { rendered.push(<TaskCreateCard key={i} block={b} result={b.id ? getResult(b.id) : undefined} tasks={tasks} />); return; }
-      if (b.name === "TaskUpdate") { rendered.push(<TaskUpdateCard key={i} block={b} result={b.id ? getResult(b.id) : undefined} tasks={tasks} />); return; }
-      if (b.name === "AskUserQuestion") { rendered.push(<AskUserQuestionCard key={i} block={b} result={b.id ? getResult(b.id) : undefined} />); return; }
-      if (b.name && b.name.startsWith("Task")) { rendered.push(<TaskGenericCard key={i} block={b} result={b.id ? getResult(b.id) : undefined} tasks={tasks} defaultOpen={settings.expandTools} />); return; }
-      rendered.push(<ToolCard key={i} block={b} result={b.id ? getResult(b.id) : undefined} defaultOpen={settings.expandTools} />);
+      if (b.name === "TaskCreate") { rendered.push(wrap(i, b, msgUuid, idxInMsg, <TaskCreateCard block={b} result={b.id ? getResult(b.id) : undefined} tasks={tasks} />)); return; }
+      if (b.name === "TaskUpdate") { rendered.push(wrap(i, b, msgUuid, idxInMsg, <TaskUpdateCard block={b} result={b.id ? getResult(b.id) : undefined} tasks={tasks} />)); return; }
+      if (b.name === "AskUserQuestion") { rendered.push(wrap(i, b, msgUuid, idxInMsg, <AskUserQuestionCard block={b} result={b.id ? getResult(b.id) : undefined} />)); return; }
+      if (b.name && b.name.startsWith("Task")) { rendered.push(wrap(i, b, msgUuid, idxInMsg, <TaskGenericCard block={b} result={b.id ? getResult(b.id) : undefined} tasks={tasks} defaultOpen={settings.expandTools} />)); return; }
+      rendered.push(wrap(i, b, msgUuid, idxInMsg, <ToolCard block={b} result={b.id ? getResult(b.id) : undefined} defaultOpen={settings.expandTools} />));
     }
   });
   return (
@@ -242,6 +270,7 @@ function AgentSpawnCard({ block, agent, onOpen, settings, query, forceExpanded }
             onOpenAgent={onOpen}
             settings={settings}
             query={query}
+            permalinks={false}
           />
         </div>
       ) : null}
@@ -249,7 +278,7 @@ function AgentSpawnCard({ block, agent, onOpen, settings, query, forceExpanded }
   );
 }
 
-function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, extraClass = "" }: {
+function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, extraClass = "", permalinks = true }: {
   group: Group;
   getResult: (id: string) => NormToolResult | undefined;
   agentsByToolUse: Record<string, NormAgent>;
@@ -259,6 +288,7 @@ function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settin
   query?: string;
   forceExpandedAgents?: Set<string>;
   extraClass?: string;
+  permalinks?: boolean;
 }) {
   const msgs = group.msgs!;
   const fam = modelFamily(group.model);
@@ -266,7 +296,7 @@ function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settin
   const skill = msgs.find(m => m.attributionSkill)?.attributionSkill;
   const lastStop = msgs[msgs.length - 1].stopReason;
   const steps = msgs.length;
-  const allBlocks = msgs.flatMap(m => m.blocks);
+  const allBlocks: BlockEntry[] = msgs.flatMap(m => m.blocks.map((b, i) => ({ b, msgUuid: m.uuid, idxInMsg: i })));
   return (
     <div className={"msg asst " + (extraClass || "fade-in")} style={{ "--mc": `var(--${fam})` } as React.CSSProperties}>
       <div className="msg-gutter">
@@ -283,13 +313,14 @@ function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settin
           {steps > 1 ? <span className="steps-badge tnum" title={steps + " model turns combined"}>{steps} steps</span> : null}
           {skill ? <span className="skill-badge">{skill}</span> : null}
           <span className="msg-time">{fmtTime(msgs[0].ts)}</span>
+          {permalinks ? <MsgPermalink msgKey={group.key} /> : null}
           {lastStop && lastStop !== "end_turn" && lastStop !== "tool_use" ? <span className="stop-badge">{lastStop}</span> : null}
           <span className="msg-head-spacer" />
           <UsageChips u={usage} compact />
           {usage.cost > 0 ? <span className="msg-cost tnum">{fmtCost(usage.cost)}</span> : null}
         </div>
         <div className="msg-blocks">
-          <Blocks blocks={allBlocks} getResult={getResult} agentsByToolUse={agentsByToolUse} onOpenAgent={onOpenAgent} settings={settings} taskStateById={taskStateById} query={query} forceExpandedAgents={forceExpandedAgents} />
+          <Blocks entries={allBlocks} getResult={getResult} agentsByToolUse={agentsByToolUse} onOpenAgent={onOpenAgent} settings={settings} taskStateById={taskStateById} query={query} forceExpandedAgents={forceExpandedAgents} permalinks={permalinks} />
         </div>
       </div>
     </div>
@@ -479,20 +510,21 @@ export function useTranscriptModel({ messages, toolResults, agentsByToolUse, que
 
 // One rendered transcript row. Exported so the virtualized renderer in
 // ConversationView can call it for each Virtuoso item.
-export function GroupRow({ g, model, agentsByToolUse, onOpenAgent, settings, query }: {
+export function GroupRow({ g, model, agentsByToolUse, onOpenAgent, settings, query, permalinks = true }: {
   g: Group;
   model: TranscriptModel;
   agentsByToolUse: Record<string, NormAgent>;
   onOpenAgent: (id: string) => void;
   settings: ViewSettings;
   query: string;
+  permalinks?: boolean;
 }) {
   const extra = model.newKeys.has(g.key) ? "slide-in-right" : "";
   if (g.kind === "user-tasknote") {
     return <UserMessage msg={g.msg!} agentsByToolUse={agentsByToolUse} onOpenAgent={onOpenAgent} extraClass={extra} />;
   }
   if (g.kind === "user") {
-    return <UserGroup msgs={g.msgs!} extraClass={extra} />;
+    return <UserGroup msgs={g.msgs!} extraClass={extra} permalinks={permalinks} />;
   }
   return (
     <AssistantGroup
@@ -505,11 +537,12 @@ export function GroupRow({ g, model, agentsByToolUse, onOpenAgent, settings, que
       query={query}
       forceExpandedAgents={model.forceExpandedAgents}
       extraClass={extra}
+      permalinks={permalinks}
     />
   );
 }
 
-export function Transcript({ messages, toolResults, agentsByToolUse, onOpenAgent, settings, query = "", live = false }: {
+export function Transcript({ messages, toolResults, agentsByToolUse, onOpenAgent, settings, query = "", live = false, permalinks = true }: {
   messages: NormMsg[];
   toolResults: Record<string, NormToolResult>;
   agentsByToolUse: Record<string, NormAgent>;
@@ -517,6 +550,7 @@ export function Transcript({ messages, toolResults, agentsByToolUse, onOpenAgent
   settings: ViewSettings;
   query?: string;
   live?: boolean;
+  permalinks?: boolean;
 }) {
   const model = useTranscriptModel({ messages, toolResults, agentsByToolUse, query });
   const { filtered, q } = model;
@@ -531,6 +565,7 @@ export function Transcript({ messages, toolResults, agentsByToolUse, onOpenAgent
           onOpenAgent={onOpenAgent}
           settings={settings}
           query={query}
+          permalinks={permalinks}
         />
       ))}
       {!q && filtered.length > 0 ? (live ? <LiveTail live /> : <ConversationEnd />) : null}

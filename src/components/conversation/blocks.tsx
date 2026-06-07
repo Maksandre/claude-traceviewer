@@ -5,6 +5,123 @@ import { agentColor, fmtDur, fmtTime, fmtTokens, modelColor, modelLabel } from "
 import { Caret, ClampBlock, CodeBlock, Markdown, MoreButton } from "../../lib/md";
 import type { NormAgent, NormBlock, NormMsg, NormToolResult } from "../../lib/normalize";
 import { toolColor } from "../../lib/format";
+import { usePermalinks } from "../../lib/permalinkCtx";
+
+// Shared copy-link primitive. Falls back from the Clipboard API to a
+// hidden textarea + execCommand when the page isn't served over a
+// secure context (http on a non-localhost origin, etc).
+function copyPermalink(params: Record<string, string>, done: () => void) {
+  const url = new URL(window.location.href);
+  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
+  const link = url.toString();
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(link).then(done).catch(() => fallbackCopy(link, done));
+  } else {
+    fallbackCopy(link, done);
+  }
+}
+function fallbackCopy(link: string, done: () => void) {
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = link; ta.style.position = "fixed"; ta.style.opacity = "0";
+    document.body.appendChild(ta); ta.select();
+    document.execCommand("copy");
+    document.body.removeChild(ta);
+    done();
+  } catch {}
+}
+
+// Briefly add `is-target` to an element, then strip it. Used to flash
+// the row/block the user just clicked or deep-linked to.
+function flashTarget(el: HTMLElement | null) {
+  if (!el) return;
+  el.classList.add("is-target");
+  window.setTimeout(() => el.classList.remove("is-target"), 2400);
+}
+
+// Small chain-link button that copies a `?msg=<uuid>` deep-link to the
+// current row. Lives in the .msg-head so it picks up the same hover row.
+// A click also scrolls the row into center view and updates the URL bar
+// via the PermalinkContext (which routes through App state so the URL
+// effect mirrors it).
+export function MsgPermalink({ msgKey }: { msgKey: string }) {
+  const [copied, setCopied] = useState(false);
+  const api = usePermalinks();
+  const onClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    api?.selectTarget(msgKey, null);
+    const msg = (e.currentTarget as HTMLElement).closest(".msg") as HTMLElement | null;
+    msg?.scrollIntoView({ behavior: "smooth", block: "start" });
+    flashTarget(msg);
+    copyPermalink({ msg: msgKey }, () => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1100);
+    });
+  };
+  return (
+    <button
+      type="button"
+      className={"msg-permalink " + (copied ? "is-copied" : "")}
+      onClick={onClick}
+      title={copied ? "Link copied" : "Copy link to this message"}
+      aria-label="Copy link to this message"
+    >
+      {copied ? <Icons.check size={11} /> : <Icons.link size={11} />}
+    </button>
+  );
+}
+
+// Per-block permalink. Sits inside a `.blk-anchor` wrapper that hosts the
+// `data-block-id` used by ConversationView's deep-link scroll. The
+// button is rendered inside a sticky slot so it stays pinned at the
+// block's top-right corner while the block scrolls past.
+export function BlockPermalink({ msgKey, blockId, label }: { msgKey: string; blockId: string; label: string }) {
+  const [copied, setCopied] = useState(false);
+  const api = usePermalinks();
+  const onClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    api?.selectTarget(msgKey, blockId);
+    const anchor = (e.currentTarget as HTMLElement).closest(".blk-anchor") as HTMLElement | null;
+    anchor?.scrollIntoView({ behavior: "smooth", block: "start" });
+    flashTarget(anchor);
+    copyPermalink({ msg: msgKey, block: blockId }, () => {
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1100);
+    });
+  };
+  return (
+    <button
+      type="button"
+      className={"blk-permalink " + (copied ? "is-copied" : "")}
+      onClick={onClick}
+      title={copied ? "Link copied" : `Jump and copy link to this ${label}`}
+      aria-label={`Jump and copy link to this ${label}`}
+    >
+      {copied ? <Icons.check size={16} /> : <Icons.link size={16} />}
+    </button>
+  );
+}
+
+// Wrapper for each rendered block. The `.blk-permalink-slot` is an
+// absolutely positioned full-height strip to the right of the block —
+// it bridges the gap so :hover survives mouse traversal, AND it gives
+// the sticky button a tall containing block to slide through as the
+// block scrolls past the viewport top.
+export function BlockAnchor({ msgKey, blockId, entityLabel, children }: {
+  msgKey: string;
+  blockId: string;
+  entityLabel: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="blk-anchor" data-block-id={blockId}>
+      {children}
+      <div className="blk-permalink-slot">
+        <BlockPermalink msgKey={msgKey} blockId={blockId} label={entityLabel} />
+      </div>
+    </div>
+  );
+}
 
 export function toolSummary(name: string | undefined, input: any): string {
   if (!input || typeof input !== "object") return "";
@@ -545,7 +662,7 @@ function UserBody({ msg }: { msg: NormMsg }) {
   );
 }
 
-export function UserGroup({ msgs, extraClass = "" }: { msgs: NormMsg[]; extraClass?: string }) {
+export function UserGroup({ msgs, extraClass = "", permalinks = true }: { msgs: NormMsg[]; extraClass?: string; permalinks?: boolean }) {
   const [lightboxIx, setLightboxIx] = useState<number | null>(null);
 
   if (msgs.length === 0) return null;
@@ -615,6 +732,7 @@ export function UserGroup({ msgs, extraClass = "" }: { msgs: NormMsg[]; extraCla
         <div className="msg-head">
           <span className="msg-time">{fmtTime(first.ts)}</span>
           {msgs.length > 1 ? <span className="user-group-tag">{msgs.length} parts</span> : null}
+          {permalinks ? <MsgPermalink msgKey={first.uuid} /> : null}
         </div>
         <div className="msg-blocks" onClick={onBlocksClick}>
           {cleanedMsgs.map((m, i) => <UserBody key={m.uuid || i} msg={m} />)}

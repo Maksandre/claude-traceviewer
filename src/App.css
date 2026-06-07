@@ -289,7 +289,9 @@ button { font-family: inherit; }
 .transcript { display: flex; flex-direction: column; }
 .msg { display: grid; grid-template-columns: 76px 1fr; gap: 14px; padding: var(--row-py) 0; }
 .msg-gutter { display: flex; flex-direction: column; align-items: center; min-width: 0; }
-.gutter-anchor { display: flex; flex-direction: column; align-items: center; gap: 6px; position: sticky; top: 14px; z-index: 2; min-width: 0; }
+/* margin-top skips past .msg-head so the dot lines up with .msg-blocks, not the time row */
+.gutter-anchor { display: flex; flex-direction: column; align-items: center; gap: 6px; position: sticky; top: 14px; z-index: 2; min-width: 0; margin-top: 27px; }
+.msg.user .gutter-anchor { margin-top: 24px; }
 .gutter-label { font-family: var(--ff-mono); font-size: 10.5px; font-weight: 600; letter-spacing: .01em; white-space: nowrap; text-align: center; color: var(--tx-1); padding: 2px 8px; border-radius: 99px; background: var(--bg-2); border: 1px solid var(--line-soft); }
 .gutter-label.asst { color: var(--mc); background: color-mix(in oklch, var(--mc) 12%, var(--bg-1)); border-color: color-mix(in oklch, var(--mc) 30%, transparent); }
 .role-dot { width: 30px; height: 30px; border-radius: 9px; display: grid; place-items: center; flex-shrink: 0; }
@@ -310,6 +312,92 @@ button { font-family: inherit; }
 .steps-badge { font-family: var(--ff-mono); font-size: 10.5px; color: var(--tx-2); background: var(--bg-2); border: 1px solid var(--line-soft); padding: 2px 8px; border-radius: 99px; }
 .stop-badge { font-family: var(--ff-mono); font-size: 10.5px; color: var(--warn); background: color-mix(in oklch, var(--warn) 14%, transparent); padding: 2px 7px; border-radius: 99px; }
 .msg-cost { font-family: var(--ff-mono); font-size: 11.5px; color: var(--accent); font-weight: 600; padding-left: 10px; margin-left: 2px; border-left: 1px solid var(--line); }
+
+/* Per-message permalink (hover-revealed). Sits between time and the rest
+   of msg-head; opacity fades in on row hover or keyboard focus. */
+.msg-permalink {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0; margin-left: -4px;
+  border: none; background: transparent; color: var(--tx-3);
+  border-radius: 6px; cursor: pointer;
+  opacity: 0; transition: opacity .12s ease, color .12s ease, background .12s ease;
+}
+.msg:hover .msg-permalink,
+.msg-permalink:focus-visible,
+.msg-permalink.is-copied { opacity: 1; }
+.msg-permalink:hover { color: var(--tx-1); background: var(--bg-2); }
+.msg-permalink.is-copied { color: var(--ok); }
+
+/* Brief flash when a `?msg=<uuid>` deep-link lands on this row. The
+   first selector handles initial deep-link load (where the row wrapper
+   gets `is-target`); the second handles inline clicks (where we add
+   `is-target` directly to the `.msg`). */
+.conv-row.is-target .msg,
+.msg.is-target { animation: msg-target 2.2s ease; border-radius: 12px; }
+@keyframes msg-target {
+  0%   { background: color-mix(in oklch, var(--accent) 22%, transparent); }
+  60%  { background: color-mix(in oklch, var(--accent) 10%, transparent); }
+  100% { background: transparent; }
+}
+
+/* Per-block permalink — one chain-link button per rendered block (text,
+   thinking, tool call, subagent spawn). The `.blk-permalink-slot` is a
+   full-height strip to the right of the block: it bridges the gap so
+   the button stays hoverable, and it gives the sticky button a tall
+   containing block to ride as the block scrolls past the viewport top.
+   The slot is wider than the button (40px) on purpose — clicks at the
+   right of the block all the way to a comfortable target stay valid,
+   and `:hover` is preserved while moving horizontally toward the button. */
+.blk-anchor { position: relative; }
+/* Slot is anchored full-height to the right of the block so its
+   padding area can bridge :hover and serve as the sticky container.
+   - top:0/bottom:0 → covers the block's full vertical range, so mouse
+     traversal anywhere alongside the block keeps the button visible.
+   - padding-top:14 → pushes the button down to roughly card-header
+     baseline (card padding is 13px), so it doesn't float above content.
+   - padding-left:12 → gives a 12px visual gap between the block's
+     right edge and the button, so the button no longer looks glued. */
+.blk-permalink-slot {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: -56px;
+  width: 56px;
+  padding: 14px 0 0 12px;
+  pointer-events: auto;
+  z-index: 2;
+}
+.blk-permalink {
+  position: sticky;
+  top: 14px;
+  width: 32px; height: 32px; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: 1px solid var(--line-soft); background: var(--bg-1); color: var(--tx-2);
+  border-radius: 8px; cursor: pointer; box-shadow: 0 2px 4px rgba(0,0,0,.08);
+  opacity: 0; transform: translateX(-4px);
+  transition: opacity .14s ease, transform .14s ease, color .14s ease, background .14s ease, border-color .14s ease;
+}
+.blk-anchor:hover .blk-permalink,
+.blk-permalink:focus-visible,
+.blk-permalink.is-copied {
+  opacity: 1; transform: translateX(0);
+}
+.blk-permalink:hover {
+  color: var(--accent); background: var(--bg-2);
+  border-color: color-mix(in oklch, var(--accent) 40%, var(--line));
+}
+.blk-permalink.is-copied {
+  color: var(--ok);
+  border-color: color-mix(in oklch, var(--ok) 40%, var(--line));
+}
+
+/* Flash a single block when its `?block=<id>` deep-link lands. */
+.blk-anchor.is-target { animation: blk-target 2.2s ease; border-radius: 12px; }
+@keyframes blk-target {
+  0%   { box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 55%, transparent); background: color-mix(in oklch, var(--accent) 14%, transparent); }
+  70%  { box-shadow: 0 0 0 3px color-mix(in oklch, var(--accent) 20%, transparent); background: color-mix(in oklch, var(--accent) 6%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; background: transparent; }
+}
 
 /* === Usage chips (token in/out/cache+ /cache→) === */
 .usage-chips { display: inline-flex; align-items: center; flex-wrap: wrap; font-family: var(--ff-mono); font-size: 11px; line-height: 1; }

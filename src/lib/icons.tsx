@@ -56,6 +56,7 @@ export const Icons = {
   plus: (p: IconProps = {}) => <Svg {...p}><path d="M12 5v14M5 12h14" /></Svg>,
   image: (p: IconProps = {}) => <Svg {...p}><rect x="3" y="4" width="18" height="16" rx="2.5" /><circle cx="9" cy="10" r="1.6" /><path d="M3 17l5-5 4 4 3-3 6 6" /></Svg>,
   zoomIn: (p: IconProps = {}) => <Svg {...p}><circle cx="11" cy="11" r="7" /><path d="M21 21l-4.3-4.3M11 8v6M8 11h6" /></Svg>,
+  link: (p: IconProps = {}) => <Svg {...p}><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1.5 1.5M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1.5-1.5" /></Svg>,
 };
 
 export function toolIcon(name?: string | null) {
