@@ -66,6 +66,14 @@ function sumUsage(msgs: NormMsg[]) {
   }), { input: 0, output: 0, cw: 0, cr: 0, cost: 0 });
 }
 
+// Text/thinking blocks always pass the tool filter — they're the narration
+// readers need to make sense of the surrounding tool calls.
+function blockMatchesToolFilter(b: NormBlock, tools: Set<string> | undefined): boolean {
+  if (!tools || tools.size === 0) return true;
+  if (b.type !== "tool_use") return true;
+  return !!(b.name && tools.has(b.name));
+}
+
 // True when this block's own content (or, for spawn blocks, its subagent)
 // contains the active query. Text/thinking blocks always count as visible —
 // hiding the model's narration around a tool call would strip the context
@@ -104,7 +112,7 @@ function blockMatchesQuery(
   return false;
 }
 
-function Blocks({ entries, getResult, agentsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, permalinks = true }: {
+function Blocks({ entries, getResult, agentsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, permalinks = true, toolFilter }: {
   entries: BlockEntry[];
   getResult: (id: string) => NormToolResult | undefined;
   agentsByToolUse: Record<string, NormAgent>;
@@ -114,9 +122,11 @@ function Blocks({ entries, getResult, agentsByToolUse, onOpenAgent, settings, ta
   query?: string;
   forceExpandedAgents?: Set<string>;
   permalinks?: boolean;
+  toolFilter?: Set<string>;
 }) {
   const q = (query || "").trim().toLowerCase();
   const showAll = q.length < 3;
+  const hasToolFilter = !!toolFilter && toolFilter.size > 0;
   let hidden = 0;
   const rendered: React.ReactNode[] = [];
   // Wraps each rendered block with the hover-revealed permalink. Subagent
@@ -135,6 +145,10 @@ function Blocks({ entries, getResult, agentsByToolUse, onOpenAgent, settings, ta
     const { b, msgUuid, idxInMsg } = entry;
     if (!showAll && !blockMatchesQuery(b, getResult, agentsByToolUse, forceExpandedAgents, q)) {
       hidden++;
+      return;
+    }
+    if (hasToolFilter && !blockMatchesToolFilter(b, toolFilter)) {
+      if (b.type === "tool_use") hidden++;
       return;
     }
     if (b.type === "text") {
@@ -278,7 +292,7 @@ function AgentSpawnCard({ block, agent, onOpen, settings, query, forceExpanded }
   );
 }
 
-function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, extraClass = "", permalinks = true }: {
+function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, extraClass = "", permalinks = true, toolFilter }: {
   group: Group;
   getResult: (id: string) => NormToolResult | undefined;
   agentsByToolUse: Record<string, NormAgent>;
@@ -289,6 +303,7 @@ function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settin
   forceExpandedAgents?: Set<string>;
   extraClass?: string;
   permalinks?: boolean;
+  toolFilter?: Set<string>;
 }) {
   const msgs = group.msgs!;
   const fam = modelFamily(group.model);
@@ -320,7 +335,7 @@ function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settin
           {usage.cost > 0 ? <span className="msg-cost tnum">{fmtCost(usage.cost)}</span> : null}
         </div>
         <div className="msg-blocks">
-          <Blocks entries={allBlocks} getResult={getResult} agentsByToolUse={agentsByToolUse} onOpenAgent={onOpenAgent} settings={settings} taskStateById={taskStateById} query={query} forceExpandedAgents={forceExpandedAgents} permalinks={permalinks} />
+          <Blocks entries={allBlocks} getResult={getResult} agentsByToolUse={agentsByToolUse} onOpenAgent={onOpenAgent} settings={settings} taskStateById={taskStateById} query={query} forceExpandedAgents={forceExpandedAgents} permalinks={permalinks} toolFilter={toolFilter} />
         </div>
       </div>
     </div>
@@ -423,15 +438,17 @@ export interface TranscriptModel {
 // All the filtering + animation state lives in this hook so we can drive
 // either the flat fallback renderer or a virtualized renderer (Virtuoso)
 // from the same source of truth.
-export function useTranscriptModel({ messages, toolResults, agentsByToolUse, query }: {
+export function useTranscriptModel({ messages, toolResults, agentsByToolUse, query, toolFilter }: {
   messages: NormMsg[];
   toolResults: Record<string, NormToolResult>;
   agentsByToolUse: Record<string, NormAgent>;
   query: string;
+  toolFilter?: Set<string>;
 }): TranscriptModel {
   const groups = useMemo(() => buildGroups(messages), [messages]);
   const taskStateById = useMemo(() => buildTaskStateById(messages, toolResults), [messages, toolResults]);
   const q = query.trim().toLowerCase();
+  const tf = toolFilter && toolFilter.size > 0 ? toolFilter : null;
 
   const groupHaystack = useMemo(() => {
     const m = new Map<string, string>();
@@ -453,9 +470,24 @@ export function useTranscriptModel({ messages, toolResults, agentsByToolUse, que
   }, [agentsByToolUse]);
 
   const { filtered, forceExpandedAgents } = useMemo(() => {
-    if (!q) return { filtered: groups, forceExpandedAgents: new Set<string>() };
+    // tool filter narrows to assistant groups that actually contain one of
+    // the selected tool calls. user / user-tasknote groups don't have a
+    // tool-name to match on, so they fall away when a tool filter is on.
+    let working = groups;
+    if (tf) {
+      working = groups.filter(g => {
+        if (g.kind !== "assistant") return false;
+        for (const m of g.msgs || []) {
+          for (const b of m.blocks) {
+            if (b.type === "tool_use" && b.name && tf.has(b.name)) return true;
+          }
+        }
+        return false;
+      });
+    }
+    if (!q) return { filtered: working, forceExpandedAgents: new Set<string>() };
     const expanded = new Set<string>();
-    const kept = groups.filter(g => {
+    const kept = working.filter(g => {
       if (g.kind === "user-tasknote") {
         if (groupHaystack.get(g.key)?.includes(q)) return true;
         const tn = isUserTaskNotification(g.msg!);
@@ -475,7 +507,7 @@ export function useTranscriptModel({ messages, toolResults, agentsByToolUse, que
       return keep;
     });
     return { filtered: kept, forceExpandedAgents: expanded };
-  }, [groups, q, agentsByToolUse, groupHaystack, agentHaystack]);
+  }, [groups, q, tf, agentsByToolUse, groupHaystack, agentHaystack]);
 
   const seenKeysRef = useRef<Set<string> | null>(null);
   const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
@@ -510,7 +542,7 @@ export function useTranscriptModel({ messages, toolResults, agentsByToolUse, que
 
 // One rendered transcript row. Exported so the virtualized renderer in
 // ConversationView can call it for each Virtuoso item.
-export function GroupRow({ g, model, agentsByToolUse, onOpenAgent, settings, query, permalinks = true }: {
+export function GroupRow({ g, model, agentsByToolUse, onOpenAgent, settings, query, permalinks = true, toolFilter }: {
   g: Group;
   model: TranscriptModel;
   agentsByToolUse: Record<string, NormAgent>;
@@ -518,6 +550,7 @@ export function GroupRow({ g, model, agentsByToolUse, onOpenAgent, settings, que
   settings: ViewSettings;
   query: string;
   permalinks?: boolean;
+  toolFilter?: Set<string>;
 }) {
   const extra = model.newKeys.has(g.key) ? "slide-in-right" : "";
   if (g.kind === "user-tasknote") {
@@ -538,11 +571,12 @@ export function GroupRow({ g, model, agentsByToolUse, onOpenAgent, settings, que
       forceExpandedAgents={model.forceExpandedAgents}
       extraClass={extra}
       permalinks={permalinks}
+      toolFilter={toolFilter}
     />
   );
 }
 
-export function Transcript({ messages, toolResults, agentsByToolUse, onOpenAgent, settings, query = "", live = false, permalinks = true }: {
+export function Transcript({ messages, toolResults, agentsByToolUse, onOpenAgent, settings, query = "", live = false, permalinks = true, toolFilter }: {
   messages: NormMsg[];
   toolResults: Record<string, NormToolResult>;
   agentsByToolUse: Record<string, NormAgent>;
@@ -551,9 +585,11 @@ export function Transcript({ messages, toolResults, agentsByToolUse, onOpenAgent
   query?: string;
   live?: boolean;
   permalinks?: boolean;
+  toolFilter?: Set<string>;
 }) {
-  const model = useTranscriptModel({ messages, toolResults, agentsByToolUse, query });
+  const model = useTranscriptModel({ messages, toolResults, agentsByToolUse, query, toolFilter });
   const { filtered, q } = model;
+  const hasToolFilter = !!toolFilter && toolFilter.size > 0;
   return (
     <div className="transcript">
       {filtered.map(g => (
@@ -566,10 +602,12 @@ export function Transcript({ messages, toolResults, agentsByToolUse, onOpenAgent
           settings={settings}
           query={query}
           permalinks={permalinks}
+          toolFilter={toolFilter}
         />
       ))}
-      {!q && filtered.length > 0 ? (live ? <LiveTail live /> : <ConversationEnd />) : null}
+      {!q && !hasToolFilter && filtered.length > 0 ? (live ? <LiveTail live /> : <ConversationEnd />) : null}
       {q && !filtered.length ? <div className="empty">no messages match "{query}"</div> : null}
+      {!q && hasToolFilter && !filtered.length ? <div className="empty">no messages match the selected tools</div> : null}
     </div>
   );
 }

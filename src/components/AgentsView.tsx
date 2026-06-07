@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
-import { agentColor, agentMeta, fmtCost, fmtDur, fmtTokens, modelColor, modelLabel, toolColor } from "../lib/format";
-import { Icons, toolIcon } from "../lib/icons";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { agentColor, agentMeta, fmtCost, fmtDur, fmtTokens, modelColor, modelLabel } from "../lib/format";
+import { Icons } from "../lib/icons";
 import { CodeBlock, Markdown } from "../lib/md";
 import type { NormAgent, NormTrace } from "../lib/normalize";
 import { clearCachedPersona, getCachedPersona, pickPluginDirectory, type CachedPersona } from "../lib/personaCache";
 import { Transcript, type ViewSettings } from "./conversation/Transcript";
+import { ToolFilterStrip } from "./ToolFilterStrip";
 
 interface Props {
   trace: NormTrace;
@@ -70,31 +71,28 @@ function StatPill({ icon: Ic, label, value, color }: { icon: (p?: { size?: numbe
   );
 }
 
-function ToolCountStrip({ counts }: { counts: Record<string, number> }) {
-  const entries = Object.entries(counts || {}).sort((a, b) => b[1] - a[1]);
-  if (!entries.length) return <span className="mono" style={{ color: "var(--tx-3)", fontSize: 12 }}>no tool calls</span>;
-  return (
-    <div className="toolcounts">
-      {entries.map(([n, c]) => {
-        const TI = toolIcon(n);
-        const col = toolColor(n);
-        return (
-          <span key={n} className="tcount" style={{ "--tc": col } as React.CSSProperties}>
-            <TI size={12} />{n}<b className="tnum">{c}</b>
-          </span>
-        );
-      })}
-    </div>
-  );
-}
-
 export function AgentDetail({ agent, onOpenAgent, settings }: { agent: NormAgent; onOpenAgent: (id: string) => void; settings: ViewSettings }) {
   const [tab, setTab] = useState<"result" | "prompt" | "transcript">("result");
   const col = agentColor(agent.agentType);
   const tools = Object.values(agent.toolCounts).reduce((a, b) => a + b, 0);
   const u = agent.usage;
+  // Tool filter state is freshly initialised on mount; call sites must
+  // pass `key={agent.id}` so switching subagents remounts and clears it.
+  const [toolFilter, setToolFilter] = useState<Set<string>>(() => new Set());
+  const toggleTool = useCallback((name: string) => {
+    // Filtering only changes the transcript tab; jump there on the first
+    // toggle so the user sees the result of their click immediately.
+    setTab("transcript");
+    setToolFilter(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
+  const clearTool = useCallback(() => setToolFilter(new Set()), []);
   return (
-    <div className="adetail fade-in" key={agent.id}>
+    <div className="adetail fade-in">
       <div className="adetail-head">
         <div className="adetail-title">
           <span className="adetail-ic" style={{ color: col, background: `color-mix(in oklch, ${col} 16%, transparent)` }}>
@@ -124,7 +122,12 @@ export function AgentDetail({ agent, onOpenAgent, settings }: { agent: NormAgent
 
       <div className="adetail-toolstrip">
         <span className="kv-label">tools used</span>
-        <ToolCountStrip counts={agent.toolCounts} />
+        <ToolFilterStrip
+          counts={agent.toolCounts}
+          selected={toolFilter}
+          onToggle={toggleTool}
+          onClear={clearTool}
+        />
       </div>
 
       <div className="adetail-tabs">
@@ -152,6 +155,7 @@ export function AgentDetail({ agent, onOpenAgent, settings }: { agent: NormAgent
               agentsByToolUse={{}}
               onOpenAgent={onOpenAgent}
               settings={settings}
+              toolFilter={toolFilter}
             />
           </div>
         ) : null}
@@ -275,7 +279,7 @@ function MainDetail({ trace, onSelect, onGotoConversation }: { trace: NormTrace;
       </div>
       <div className="adetail-toolstrip">
         <span className="kv-label">direct tool calls</span>
-        <ToolCountStrip counts={trace.main.toolCounts} />
+        <ToolFilterStrip counts={trace.main.toolCounts} />
       </div>
       <div className="delegation">
         <div className="kv-label" style={{ marginBottom: 10 }}>delegated work</div>
@@ -367,7 +371,7 @@ export function AgentsView({ trace, settings, onGotoConversation, focusAgentId, 
       <div className="agent-detail-wrap">
         {sel === "main" || !selectedAgent
           ? <MainDetail trace={trace} onSelect={setSel} onGotoConversation={onGotoConversation} />
-          : <AgentDetail agent={selectedAgent} onOpenAgent={onOpenAgent} settings={settings} />}
+          : <AgentDetail key={selectedAgent.id} agent={selectedAgent} onOpenAgent={onOpenAgent} settings={settings} />}
       </div>
     </div>
   );

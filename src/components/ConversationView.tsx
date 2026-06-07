@@ -4,6 +4,7 @@ import type { NormAgent, NormTrace } from "../lib/normalize";
 import { fmtCost, fmtDur, modelColor, modelLabel } from "../lib/format";
 import { Icons } from "../lib/icons";
 import { useSearchHighlight } from "../lib/searchHighlight";
+import { ToolFilterStrip } from "./ToolFilterStrip";
 import {
   ConversationEnd,
   GroupRow,
@@ -22,9 +23,16 @@ interface Props {
   targetBlock?: string | null;
 }
 
-function ConvHeader({ trace }: { trace: NormTrace }) {
+function ConvHeader({ trace, toolFilter, onToggleTool, onClearTool }: {
+  trace: NormTrace;
+  toolFilter: Set<string>;
+  onToggleTool: (name: string) => void;
+  onClearTool: () => void;
+}) {
   const s = trace.session;
   const totalTools = Object.values(trace.stats.toolFreq).reduce((a, b) => a + b, 0);
+  const mainToolCounts = trace.main.toolCounts;
+  const hasMainTools = Object.keys(mainToolCounts).length > 0;
   return (
     <div className="conv-head">
       <div className="conv-head-main">
@@ -57,6 +65,17 @@ function ConvHeader({ trace }: { trace: NormTrace }) {
           <span className="chs-l">tool calls</span>
         </div>
       </div>
+      {hasMainTools ? (
+        <div className="conv-head-tools">
+          <span className="kv-label">tools used</span>
+          <ToolFilterStrip
+            counts={mainToolCounts}
+            selected={toolFilter}
+            onToggle={onToggleTool}
+            onClear={onClearTool}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -69,13 +88,37 @@ export function ConversationView({ trace, query, onOpenAgent, settings, live, ta
     return m;
   }, [trace.agents]);
 
+  const [toolFilter, setToolFilter] = useState<Set<string>>(() => new Set());
+  // A new session/trace can have a totally different tool list, so drop any
+  // selection that wouldn't match anything here.
+  useEffect(() => {
+    setToolFilter(prev => {
+      if (prev.size === 0) return prev;
+      const valid = new Set<string>();
+      for (const name of prev) if (trace.main.toolCounts[name]) valid.add(name);
+      if (valid.size === prev.size) return prev;
+      return valid;
+    });
+  }, [trace.main.toolCounts]);
+  const toggleTool = useCallback((name: string) => {
+    setToolFilter(prev => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  }, []);
+  const clearTool = useCallback(() => setToolFilter(new Set()), []);
+
   const model = useTranscriptModel({
     messages: trace.main.messages,
     toolResults: trace.main.toolResults,
     agentsByToolUse,
     query,
+    toolFilter,
   });
   const { filtered, q } = model;
+  const hasToolFilter = toolFilter.size > 0;
 
   // Wrapper element scopes the highlight walker to the rendered transcript.
   // Virtuoso only mounts items that are on screen, so the walker is naturally
@@ -186,28 +229,32 @@ export function ConversationView({ trace, query, onOpenAgent, settings, live, ta
         onOpenAgent={onOpenAgent}
         settings={settings}
         query={query}
+        toolFilter={toolFilter}
       />
     </div>
-  ), [model, agentsByToolUse, onOpenAgent, settings, query, highlightKey]);
+  ), [model, agentsByToolUse, onOpenAgent, settings, query, highlightKey, toolFilter]);
 
   const Header = useCallback(() => (
     <div className="conv-row conv-row-header">
-      <ConvHeader trace={trace} />
+      <ConvHeader trace={trace} toolFilter={toolFilter} onToggleTool={toggleTool} onClearTool={clearTool} />
     </div>
-  ), [trace]);
+  ), [trace, toolFilter, toggleTool, clearTool]);
 
   const Footer = useCallback(() => {
     if (q && !filtered.length) {
       return <div className="conv-row"><div className="empty">no messages match "{query}"</div></div>;
     }
-    if (q) return <div className="conv-row-spacer" />;
+    if (hasToolFilter && !filtered.length) {
+      return <div className="conv-row"><div className="empty">no messages match the selected tools</div></div>;
+    }
+    if (q || hasToolFilter) return <div className="conv-row-spacer" />;
     if (filtered.length === 0) return null;
     return (
       <div className="conv-row conv-row-footer">
         {live ? <LiveTail live /> : <ConversationEnd />}
       </div>
     );
-  }, [q, query, filtered.length, live]);
+  }, [q, query, filtered.length, live, hasToolFilter]);
 
   return (
     <div className="conv-wrap" ref={containerRef}>
