@@ -136,6 +136,21 @@ app.get("/api/projects/:project/sessions/:session", (req, res) => {
       req.params.project,
       req.params.session + ".jsonl"
     );
+    // Conditional GET: poll fires every few seconds; when the .jsonl file
+    // hasn't been touched we return 304 so the browser tab loader barely
+    // flickers and the client skips its re-normalize pass entirely.
+    const stat = fs.statSync(filePath);
+    const lastModified = stat.mtime.toUTCString();
+    const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+    res.set("Cache-Control", "no-cache");
+    res.set("Last-Modified", lastModified);
+    res.set("ETag", etag);
+    const inm = req.header("if-none-match");
+    const ims = req.header("if-modified-since");
+    if ((inm && inm === etag) || (ims && new Date(ims).getTime() >= Math.floor(stat.mtimeMs))) {
+      res.status(304).end();
+      return;
+    }
     const lines = fs.readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
     const records = lines.map((line) => {
       try {

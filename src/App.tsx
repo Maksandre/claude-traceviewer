@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Icons } from "./lib/icons";
 import { Sidebar } from "./components/Sidebar";
 import { Toolbar } from "./components/Toolbar";
@@ -48,6 +48,16 @@ function App() {
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const [drawerId, setDrawerId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
+  // Search runs when the user presses Enter in the Toolbar. We wrap the
+  // state update in a transition so React can keep the input painted while
+  // it works through the heavy filter + highlight + re-render pass.
+  // `isSearching` drives the spinner shown back in the search box.
+  const [isSearching, startSearchTransition] = useTransition();
+  const submitQuery = useCallback((next: string) => {
+    startSearchTransition(() => setQuery(next));
+  }, []);
+  const deferredQuery = useDeferredValue(query);
+  const effectiveQuery = deferredQuery.trim().length >= 3 ? deferredQuery : "";
   const [showSearch, setShowSearch] = useState(false);
   const [focusAgentId, setFocusAgentId] = useState<string | null>(null);
   const [sidebarW, setSidebarW] = useState<number>(() => {
@@ -134,7 +144,18 @@ function App() {
     fetch(`/api/projects/${encodeURIComponent(selectedProject)}/sessions/${encodeURIComponent(selectedSession)}`)
       .then(r => r.json())
       .then((data) => {
-        setRecords(Array.isArray(data) ? data : []);
+        const next: TraceRecord[] = Array.isArray(data) ? data : [];
+        setRecords(prev => {
+          // Polling: skip the re-normalize + re-render storm when the
+          // session hasn't actually grown or shifted.
+          if (prev.length === next.length) {
+            const a = prev[prev.length - 1];
+            const b = next[next.length - 1];
+            if (a === b) return prev;
+            if (a && b && a.uuid && a.uuid === b.uuid && a.timestamp === b.timestamp) return prev;
+          }
+          return next;
+        });
         setLoading(false);
         setLastUpdated(Date.now());
       })
@@ -166,19 +187,6 @@ function App() {
     return () => { cancelled = true; };
   }, [records, selectedProject, selectedSession]);
 
-  const [updatedLabel, setUpdatedLabel] = useState("");
-  useEffect(() => {
-    const tick = () => {
-      if (!lastUpdated) { setUpdatedLabel(""); return; }
-      const diff = Math.floor((Date.now() - lastUpdated) / 1000);
-      if (diff < 2) setUpdatedLabel("just now");
-      else if (diff < 60) setUpdatedLabel(`${diff}s ago`);
-      else setUpdatedLabel(`${Math.floor(diff / 60)}m ago`);
-    };
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [lastUpdated]);
 
   const handleRefresh = useCallback(() => {
     setRefreshSpin(n => n + 1);
@@ -234,15 +242,16 @@ function App() {
           refreshSpin={refreshSpin}
           autoRefresh={autoRefresh}
           onToggleAutoRefresh={() => setAutoRefresh(v => !v)}
-          updatedLabel={updatedLabel}
+          lastUpdated={lastUpdated}
           theme={theme}
           onToggleTheme={() => setTheme(t => t === "dark" ? "light" : "dark")}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen(o => !o)}
           query={query}
-          onQueryChange={setQuery}
+          onQueryChange={submitQuery}
           showSearch={showSearch}
           onShowSearch={setShowSearch}
+          searching={isSearching}
         />
         <div className="canvas">
           {!hasSession ? (
@@ -270,7 +279,7 @@ function App() {
           ) : !trace ? (
             <div className="empty-state"><div>Loading trace…</div></div>
           ) : view === "conversation" ? (
-            <ConversationView trace={trace} query={query} onOpenAgent={setDrawerId} settings={settings} live={isWorking} />
+            <ConversationView trace={trace} query={effectiveQuery} onOpenAgent={setDrawerId} settings={settings} live={isWorking} />
           ) : view === "agents" ? (
             <AgentsView
               trace={trace}

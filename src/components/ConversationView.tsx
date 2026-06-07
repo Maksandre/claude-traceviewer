@@ -1,8 +1,16 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import type { NormAgent, NormTrace } from "../lib/normalize";
 import { fmtCost, fmtDur, modelColor, modelLabel } from "../lib/format";
 import { Icons } from "../lib/icons";
-import { Transcript, type ViewSettings } from "./conversation/Transcript";
+import { useSearchHighlight } from "../lib/searchHighlight";
+import {
+  ConversationEnd,
+  GroupRow,
+  LiveTail,
+  useTranscriptModel,
+  type ViewSettings,
+} from "./conversation/Transcript";
 
 interface Props {
   trace: NormTrace;
@@ -52,52 +60,84 @@ function ConvHeader({ trace }: { trace: NormTrace }) {
 }
 
 export function ConversationView({ trace, query, onOpenAgent, settings, live }: Props) {
-  const agentsByToolUse: Record<string, NormAgent> = {};
-  for (const a of trace.agents) if (a.toolUseId) agentsByToolUse[a.toolUseId] = a;
+  // Stable per-trace so the search index doesn't tear down on every render.
+  const agentsByToolUse = useMemo(() => {
+    const m: Record<string, NormAgent> = {};
+    for (const a of trace.agents) if (a.toolUseId) m[a.toolUseId] = a;
+    return m;
+  }, [trace.agents]);
 
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const [showJump, setShowJump] = useState(false);
+  const model = useTranscriptModel({
+    messages: trace.main.messages,
+    toolResults: trace.main.toolResults,
+    agentsByToolUse,
+    query,
+  });
+  const { filtered, q } = model;
 
-  const isAtBottom = useCallback(() => {
-    const el = scrollRef.current;
-    if (!el) return true;
-    return el.scrollHeight - el.scrollTop - el.clientHeight < 120;
+  // Wrapper element scopes the highlight walker to the rendered transcript.
+  // Virtuoso only mounts items that are on screen, so the walker is naturally
+  // bounded by the viewport — no walking through thousands of off-screen nodes.
+  const containerRef = useRef<HTMLDivElement>(null);
+  useSearchHighlight(containerRef, query);
+
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const [atBottom, setAtBottom] = useState(true);
+  const showJump = !atBottom;
+
+  const scrollToBottom = useCallback(() => {
+    virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" });
   }, []);
 
-  useEffect(() => {
-    const el = scrollRef.current;
-    if (!el) return;
-    const onScroll = () => setShowJump(!isAtBottom());
-    el.addEventListener("scroll", onScroll, { passive: true });
-    onScroll();
-    return () => el.removeEventListener("scroll", onScroll);
-  }, [isAtBottom]);
+  const renderItem = useCallback((_index: number, g: typeof filtered[number]) => (
+    <div className="conv-row">
+      <GroupRow
+        g={g}
+        model={model}
+        agentsByToolUse={agentsByToolUse}
+        onOpenAgent={onOpenAgent}
+        settings={settings}
+        query={query}
+      />
+    </div>
+  ), [model, agentsByToolUse, onOpenAgent, settings, query]);
 
-  const scrollToBottom = useCallback((smooth = true) => {
-    const el = scrollRef.current;
-    if (!el) return;
-    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? "smooth" : "auto" });
-  }, []);
+  const Header = useCallback(() => (
+    <div className="conv-row conv-row-header">
+      <ConvHeader trace={trace} />
+    </div>
+  ), [trace]);
+
+  const Footer = useCallback(() => {
+    if (q && !filtered.length) {
+      return <div className="conv-row"><div className="empty">no messages match "{query}"</div></div>;
+    }
+    if (q) return <div className="conv-row-spacer" />;
+    if (filtered.length === 0) return null;
+    return (
+      <div className="conv-row conv-row-footer">
+        {live ? <LiveTail live /> : <ConversationEnd />}
+      </div>
+    );
+  }, [q, query, filtered.length, live]);
 
   return (
-    <div className="conv-wrap">
-      <div className="conv-scroll" ref={scrollRef}>
-        <div className="conv-inner">
-          <ConvHeader trace={trace} />
-          <Transcript
-            messages={trace.main.messages}
-            toolResults={trace.main.toolResults}
-            agentsByToolUse={agentsByToolUse}
-            onOpenAgent={onOpenAgent}
-            settings={settings}
-            query={query}
-            live={live}
-          />
-        </div>
-      </div>
+    <div className="conv-wrap" ref={containerRef}>
+      <Virtuoso
+        ref={virtuosoRef}
+        className="conv-scroll"
+        data={filtered}
+        computeItemKey={(_i, g) => g.key}
+        itemContent={renderItem}
+        components={{ Header, Footer }}
+        atBottomStateChange={setAtBottom}
+        atBottomThreshold={120}
+        increaseViewportBy={{ top: 600, bottom: 1200 }}
+        followOutput={live ? "smooth" : false}
+      />
       <button
         className={"jump-bottom " + (showJump ? "visible" : "")}
-        onClick={() => scrollToBottom(true)}
+        onClick={scrollToBottom}
         aria-label="Jump to latest"
         title="Jump to latest"
       >

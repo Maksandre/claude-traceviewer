@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Icons, toolIcon } from "../../lib/icons";
-import { agentColor, agentMeta, fmtCost, fmtDur, fmtTime, fmtTokens, modelColor, modelLabel } from "../../lib/format";
+import { agentColor, fmtDur, fmtTime, fmtTokens, modelColor, modelLabel } from "../../lib/format";
 import { Caret, ClampBlock, CodeBlock, Markdown, MoreButton } from "../../lib/md";
 import type { NormAgent, NormBlock, NormMsg, NormToolResult } from "../../lib/normalize";
 import { toolColor } from "../../lib/format";
@@ -311,45 +311,8 @@ export function AskUserQuestionCard({ block, result }: { block: NormBlock; resul
   );
 }
 
-export function AgentSpawnCard({ block, agent, onOpen }: { block: NormBlock; agent?: NormAgent; onOpen: (id: string) => void }) {
-  const type = (block.input?.subagent_type as string) || (agent?.agentType || "agent");
-  const hue = agent ? agentMeta(agent.agentType).hue : agentMeta(type).hue;
-  const col = `oklch(0.70 0.12 ${hue})`;
-  const modelStr = agent ? agent.model : (block.input?.model as string | undefined);
-  return (
-    <button
-      className="agent-spawn fade-in"
-      style={{ "--ac": col } as React.CSSProperties}
-      onClick={() => agent && onOpen(agent.id)}
-      disabled={!agent}
-    >
-      <span className="agent-spawn-ic" style={{ color: col, background: `color-mix(in oklch, ${col} 16%, transparent)` }}>
-        <Icons.agent size={16} />
-      </span>
-      <span className="agent-spawn-main">
-        <span className="agent-spawn-top">
-          <span className="agent-spawn-type" style={{ color: col }}>{type}</span>
-          {modelStr ? (
-            <span className="model-badge sm" style={{ "--mc": modelColor(modelStr) } as React.CSSProperties}>
-              <span className="model-dot" />{modelLabel(modelStr)}
-            </span>
-          ) : null}
-          <span className="agent-spawn-arrow">Subagent</span>
-        </span>
-        <span className="agent-spawn-desc">{block.input?.description || ""}</span>
-        {agent ? (
-          <span className="agent-spawn-stats">
-            <span><Icons.layers size={11} /> {agent.msgCount} msgs</span>
-            <span><Icons.terminal size={11} /> {Object.values(agent.toolCounts).reduce((a, b) => a + b, 0)} tools</span>
-            <span><Icons.clock size={11} /> {fmtDur(agent.durationMs)}</span>
-            <span style={{ color: "var(--accent)" }}>{fmtCost(agent.usage.cost)}</span>
-          </span>
-        ) : null}
-      </span>
-      {agent ? <span className="agent-spawn-go"><Icons.arrowRight size={15} /></span> : null}
-    </button>
-  );
-}
+// AgentSpawnCard now lives in Transcript.tsx so it can recursively render a
+// subagent's transcript inline without a circular import through blocks.tsx.
 
 export interface TaskNotificationData {
   taskId: string;
