@@ -3,6 +3,7 @@ import { agentColor, agentMeta, fmtCost, fmtDur, fmtTokens, modelColor, modelLab
 import { Icons, toolIcon } from "../lib/icons";
 import { CodeBlock, Markdown } from "../lib/md";
 import type { NormAgent, NormTrace } from "../lib/normalize";
+import { clearCachedPersona, getCachedPersona, pickPluginDirectory, type CachedPersona } from "../lib/personaCache";
 import { Transcript, type ViewSettings } from "./conversation/Transcript";
 
 interface Props {
@@ -137,7 +138,12 @@ export function AgentDetail({ agent, onOpenAgent, settings }: { agent: NormAgent
 
       <div className="adetail-pane">
         {tab === "result" ? <div className="result-card"><Markdown text={agent.result || "_No textual result captured._"} /></div> : null}
-        {tab === "prompt" ? <div className="prompt-card"><CodeBlock code={agent.prompt} max={1000} /></div> : null}
+        {tab === "prompt" ? (
+          <div className="prompt-card">
+            <PersonaSection agent={agent} />
+            <CodeBlock code={agent.prompt} max={1000} />
+          </div>
+        ) : null}
         {tab === "transcript" ? (
           <div className="adetail-transcript">
             <Transcript
@@ -149,6 +155,88 @@ export function AgentDetail({ agent, onOpenAgent, settings }: { agent: NormAgent
             />
           </div>
         ) : null}
+      </div>
+    </div>
+  );
+}
+
+function PersonaSection({ agent }: { agent: NormAgent }) {
+  const [cached, setCached] = useState<CachedPersona | null>(() => getCachedPersona(agent.agentType));
+  const [picking, setPicking] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+
+  // Reset state whenever the agent changes (when user switches subagents in the drawer).
+  useEffect(() => {
+    setCached(getCachedPersona(agent.agentType));
+    setNotice(null);
+  }, [agent.agentType]);
+
+  const onPick = async () => {
+    setPicking(true);
+    setNotice(null);
+    try {
+      const result = await pickPluginDirectory();
+      if (result.cancelled) return;
+      const hit = result.added.find((a) => a.agentType === agent.agentType);
+      if (hit) {
+        setCached(getCachedPersona(agent.agentType));
+        setNotice(`loaded ${result.added.length} agent${result.added.length === 1 ? "" : "s"} from the picked directory`);
+      } else if (result.added.length > 0) {
+        setNotice(`loaded ${result.added.length} agent${result.added.length === 1 ? "" : "s"}, but none matched ${agent.agentType}`);
+      } else {
+        setNotice("no agent definitions (*.md under agents/) found in this directory");
+      }
+    } finally {
+      setPicking(false);
+    }
+  };
+
+  const onClear = () => {
+    clearCachedPersona(agent.agentType);
+    setCached(null);
+    setNotice(null);
+  };
+
+  // 1. Server resolved the persona — show as-is.
+  if (agent.persona) {
+    return (
+      <details className="persona-block">
+        <summary>
+          <span className="persona-label">persona</span>
+          <span className="persona-path" title={agent.persona.resolvedPath}>{agent.persona.resolvedPath}</span>
+        </summary>
+        <div className="persona-body"><CodeBlock code={agent.persona.content} max={1000} /></div>
+      </details>
+    );
+  }
+
+  // 2. Loaded from the client cache via a previous pick.
+  if (cached) {
+    return (
+      <details className="persona-block">
+        <summary>
+          <span className="persona-label">persona <span className="persona-cache-tag">cached</span></span>
+          <span className="persona-path" title={cached.sourceRelPath}>{cached.sourceRelPath}</span>
+          <button type="button" className="persona-clear" onClick={(e) => { e.preventDefault(); onClear(); }} title="forget this cached persona">×</button>
+        </summary>
+        <div className="persona-body"><CodeBlock code={cached.content} max={1000} /></div>
+      </details>
+    );
+  }
+
+  // 3. Nothing resolved — offer the pick button.
+  return (
+    <div className="persona-empty">
+      <div className="persona-empty-head">
+        <span className="persona-label">persona</span>
+        <span className="persona-empty-msg">not found for <code>{agent.agentType}</code></span>
+      </div>
+      <button type="button" className="persona-pick-btn" onClick={onPick} disabled={picking}>
+        {picking ? "loading…" : "load plugin directory…"}
+      </button>
+      {notice ? <div className="persona-notice">{notice}</div> : null}
+      <div className="persona-empty-hint">
+        pick the directory that contains <code>agents/{agent.agentType.includes(":") ? agent.agentType.split(":")[1] : agent.agentType}.md</code> (or any ancestor of it). cached in your browser; you only need to do this once per source.
       </div>
     </div>
   );

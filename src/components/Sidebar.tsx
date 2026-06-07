@@ -182,16 +182,29 @@ export function Sidebar({
         </span>
       </div>
 
-      <div className="nav-searchwrap">
+      <form
+        className="nav-searchwrap"
+        role="search"
+        autoComplete="off"
+        onSubmit={(e) => e.preventDefault()}
+      >
         <Icons.search size={14} />
         <input
           className="nav-search"
+          type="search"
+          name="project-filter"
           placeholder="filter projects…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
+          autoComplete="off"
+          autoCorrect="off"
+          autoCapitalize="off"
+          spellCheck={false}
+          data-1p-ignore
+          data-lpignore="true"
         />
-        {query ? <button className="nav-search-clear" onClick={() => setQuery("")}>×</button> : null}
-      </div>
+        {query ? <button type="button" className="nav-search-clear" onClick={() => setQuery("")}>×</button> : null}
+      </form>
 
       <div className="nav-head">
         <span className="nav-head-label"><Icons.folder size={12} /> projects</span>

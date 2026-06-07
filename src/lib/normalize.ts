@@ -45,6 +45,7 @@ export interface NormAgent {
   toolCounts: Record<string, number>;
   usage: { input: number; output: number; cw: number; cr: number; cost: number };
   result: string;
+  persona: { content: string; resolvedPath: string } | null;
 }
 
 export interface NormSession {
@@ -364,6 +365,7 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
         toolCounts: aNorm.toolCounts,
         usage: aNorm.usage,
         result: result || lastAssistTxt,
+        persona: data?.persona || null,
       });
     } catch {
       /* ignore */

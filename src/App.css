@@ -563,6 +563,29 @@ button { font-family: inherit; }
 .atab.active { color: var(--accent); border-bottom-color: var(--accent); }
 .atab-count { font-family: var(--ff-mono); font-size: 10.5px; background: var(--bg-3); color: var(--tx-2); padding: 1px 7px; border-radius: 99px; }
 .result-card { background: var(--bg-1); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 20px 22px; }
+.prompt-card { display: flex; flex-direction: column; gap: 12px; }
+.persona-block { border: 1px solid var(--line-soft); border-radius: var(--r-md); background: var(--bg-1); overflow: hidden; }
+.persona-block > summary { display: flex; align-items: center; gap: 10px; padding: 9px 14px; cursor: pointer; list-style: none; user-select: none; font-size: 12px; }
+.persona-block > summary::-webkit-details-marker { display: none; }
+.persona-block > summary::before { content: "▸"; color: var(--tx-3); font-size: 10px; transition: transform .15s; display: inline-block; }
+.persona-block[open] > summary::before { transform: rotate(90deg); }
+.persona-block[open] > summary { border-bottom: 1px solid var(--line-soft); }
+.persona-label { font-family: var(--ff-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--tx-3); display: inline-flex; align-items: center; gap: 8px; }
+.persona-cache-tag { font-family: var(--ff-mono); font-size: 9.5px; padding: 1px 6px; border-radius: 99px; background: var(--bg-3); color: var(--tx-2); text-transform: none; letter-spacing: 0; }
+.persona-path { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; direction: rtl; text-align: left; }
+.persona-body { padding: 14px; }
+.persona-clear { margin-left: auto; background: transparent; border: none; color: var(--tx-3); font-size: 16px; line-height: 1; cursor: pointer; padding: 4px 8px; border-radius: 6px; }
+.persona-clear:hover { color: var(--tx-0); background: var(--bg-3); }
+.persona-empty { border: 1px dashed var(--line); border-radius: var(--r-md); background: var(--bg-1); padding: 14px 16px; display: flex; flex-direction: column; gap: 10px; }
+.persona-empty-head { display: flex; align-items: center; gap: 10px; }
+.persona-empty-msg { font-size: 12.5px; color: var(--tx-2); }
+.persona-empty-msg code { font-family: var(--ff-mono); font-size: 11.5px; padding: 1px 6px; border-radius: 5px; background: var(--bg-2); color: var(--tx-1); }
+.persona-pick-btn { align-self: flex-start; padding: 7px 14px; border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--bg-2); color: var(--tx-0); font-size: 12.5px; font-weight: 500; cursor: pointer; transition: .14s; }
+.persona-pick-btn:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+.persona-pick-btn:disabled { opacity: .55; cursor: not-allowed; }
+.persona-notice { font-size: 12px; color: var(--tx-2); padding: 8px 10px; background: var(--bg-2); border-radius: var(--r-sm); }
+.persona-empty-hint { font-size: 11.5px; color: var(--tx-3); line-height: 1.5; }
+.persona-empty-hint code { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-2); }
 .adetail-transcript .transcript { margin-top: -6px; }
 .adetail-transcript .msg { grid-template-columns: 70px 1fr; gap: 11px; }
 
@@ -724,7 +747,7 @@ button { font-family: inherit; }
    ============================================================ */
 .drawer-overlay { position: fixed; inset: 0; z-index: 60; display: flex; justify-content: flex-end; background: color-mix(in oklch, var(--bg-0) 50%, transparent); backdrop-filter: blur(3px); animation: ovIn .18s ease; }
 @keyframes ovIn { from { opacity: 0; } to { opacity: 1; } }
-.drawer-panel { width: min(720px, 94vw); height: 100%; background: var(--bg-0); border-left: 1px solid var(--line); box-shadow: -24px 0 60px -24px rgba(0,0,0,.6); display: flex; flex-direction: column; animation: drIn .3s cubic-bezier(.2,.8,.2,1); }
+.drawer-panel { width: min(1080px, 94vw); height: 100%; background: var(--bg-0); border-left: 1px solid var(--line); box-shadow: -24px 0 60px -24px rgba(0,0,0,.6); display: flex; flex-direction: column; animation: drIn .3s cubic-bezier(.2,.8,.2,1); }
 @keyframes drIn { from { transform: translateX(60px); opacity: .3; } to { transform: none; opacity: 1; } }
 .drawer-bar { height: 50px; flex-shrink: 0; display: flex; align-items: center; gap: 11px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line); background: var(--bg-1); }
 .drawer-bar-ic { width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; flex-shrink: 0; }
