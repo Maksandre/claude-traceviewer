@@ -136,6 +136,21 @@ app.get("/api/projects/:project/sessions/:session", (req, res) => {
       req.params.project,
       req.params.session + ".jsonl"
     );
+    // Conditional GET: poll fires every few seconds; when the .jsonl file
+    // hasn't been touched we return 304 so the browser tab loader barely
+    // flickers and the client skips its re-normalize pass entirely.
+    const stat = fs.statSync(filePath);
+    const lastModified = stat.mtime.toUTCString();
+    const etag = `"${stat.mtimeMs.toString(36)}-${stat.size.toString(36)}"`;
+    res.set("Cache-Control", "no-cache");
+    res.set("Last-Modified", lastModified);
+    res.set("ETag", etag);
+    const inm = req.header("if-none-match");
+    const ims = req.header("if-modified-since");
+    if ((inm && inm === etag) || (ims && new Date(ims).getTime() >= Math.floor(stat.mtimeMs))) {
+      res.status(304).end();
+      return;
+    }
     const lines = fs.readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
     const records = lines.map((line) => {
       try {
@@ -149,6 +164,63 @@ app.get("/api/projects/:project/sessions/:session", (req, res) => {
     res.status(404).json({ error: "Session not found" });
   }
 });
+
+// Resolve a subagent's persona (the .md file the model reads as its system prompt).
+// Covers the standard Claude Code agent layouts. Note that paths under <cwd>
+// (project-local agents) only resolve if the server has filesystem access to
+// the project directory — true when running via `npm start`, but not in the
+// default Docker setup which only mounts ~/.claude. Custom --plugin-dir
+// sources are not covered.
+// Returns the first match plus its resolved path, or null.
+function resolvePersona(cwd: string, agentType: string): { content: string; resolvedPath: string } | null {
+  const tryRead = (p: string) => {
+    try {
+      const stat = fs.statSync(p);
+      if (stat.isFile()) return { content: fs.readFileSync(p, "utf-8"), resolvedPath: p };
+    } catch {}
+    return null;
+  };
+
+  const candidates: string[] = [];
+
+  // 1. Project-local standard agents (cwd-reachable only).
+  if (cwd) candidates.push(path.join(cwd, ".claude/agents", `${agentType}.md`));
+
+  // 2. User-level standard agents.
+  candidates.push(path.join(CLAUDE_DIR, "agents", `${agentType}.md`));
+
+  // 3. Namespaced types like "qa:poc-writer" → ns="qa", name="poc-writer".
+  const m = agentType.match(/^([^:]+):(.+)$/);
+  if (m) {
+    const ns = m[1];
+    const name = m[2];
+
+    // 3a. Project-local plugins (cwd-reachable only).
+    if (cwd) {
+      candidates.push(path.join(cwd, ".claude/plugins", ns, "agents", `${name}.md`));
+      candidates.push(path.join(cwd, ".claude/skills", ns, "agents", `${name}.md`));
+    }
+
+    // 3b. Marketplace-installed plugin agents.
+    const cacheRoot = path.join(CLAUDE_DIR, "plugins/cache");
+    try {
+      for (const market of fs.readdirSync(cacheRoot)) {
+        const pluginDir = path.join(cacheRoot, market, ns);
+        try {
+          for (const ver of fs.readdirSync(pluginDir)) {
+            candidates.push(path.join(pluginDir, ver, "agents", `${name}.md`));
+          }
+        } catch {}
+      }
+    } catch {}
+  }
+
+  for (const c of candidates) {
+    const hit = tryRead(c);
+    if (hit) return hit;
+  }
+  return null;
+}
 
 // Get subagent conversation
 app.get("/api/projects/:project/sessions/:session/agents/:agentId", (req, res) => {
@@ -170,7 +242,13 @@ app.get("/api/projects/:project/sessions/:session/agents/:agentId", (req, res) =
     let meta = null;
     try { meta = JSON.parse(fs.readFileSync(metaFile, "utf-8")); } catch {}
 
-    res.json({ meta, records });
+    let cwd = "";
+    for (const r of records) {
+      if (r?.cwd) { cwd = r.cwd; break; }
+    }
+    const persona = meta?.agentType ? resolvePersona(cwd, meta.agentType) : null;
+
+    res.json({ meta, records, persona });
   } catch {
     res.status(404).json({ error: "Agent not found" });
   }

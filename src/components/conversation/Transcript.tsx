@@ -1,13 +1,28 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { fmtCost, fmtTime, modelFamily, modelLabel } from "../../lib/format";
+import { agentMeta, fmtCost, fmtDur, fmtTime, modelColor, modelFamily, modelLabel } from "../../lib/format";
 import { Icons } from "../../lib/icons";
-import { UsageChips } from "../../lib/md";
+import { Caret, UsageChips } from "../../lib/md";
 import type { NormAgent, NormBlock, NormMsg, NormToolResult } from "../../lib/normalize";
-import { AgentSpawnCard, AskUserQuestionCard, TaskCreateCard, TaskGenericCard, TaskUpdateCard, ThinkingBlock, ToolCard, UserGroup, UserMessage, isUserTaskNotification, type TaskSnapshot } from "./blocks";
+import { AskUserQuestionCard, BlockAnchor, MsgPermalink, TaskCreateCard, TaskGenericCard, TaskUpdateCard, ThinkingBlock, ToolCard, UserGroup, UserMessage, isUserTaskNotification, type TaskSnapshot } from "./blocks";
+
+// Each entry carries the source msg's uuid + the block's index inside
+// that msg. We need both so non-tool blocks (text/thinking — which have
+// no stable id) get a deterministic `<msg-uuid>:<index>` block id.
+interface BlockEntry { b: NormBlock; msgUuid: string; idxInMsg: number; }
+
+function entityLabelFor(b: NormBlock): string {
+  if (b.type === "text") return "text block";
+  if (b.type === "thinking") return "thinking block";
+  if (b.type === "tool_use") {
+    if (b.name === "Agent" || b.name === "Task") return "subagent spawn";
+    return `${b.name || "tool"} call`;
+  }
+  return "block";
+}
 
 export interface ViewSettings { expandThinking: boolean; expandTools: boolean; }
 
-interface Group {
+export interface Group {
   kind: "user" | "user-tasknote" | "assistant";
   key: string;
   msg?: NormMsg;
@@ -51,47 +66,244 @@ function sumUsage(msgs: NormMsg[]) {
   }), { input: 0, output: 0, cw: 0, cr: 0, cost: 0 });
 }
 
-function Blocks({ blocks, getResult, agentsByToolUse, onOpenAgent, settings, taskStateById }: {
-  blocks: NormBlock[];
+// Text/thinking blocks always pass the tool filter — they're the narration
+// readers need to make sense of the surrounding tool calls.
+function blockMatchesToolFilter(b: NormBlock, tools: Set<string> | undefined): boolean {
+  if (!tools || tools.size === 0) return true;
+  if (b.type !== "tool_use") return true;
+  return !!(b.name && tools.has(b.name));
+}
+
+// True when this block's own content (or, for spawn blocks, its subagent)
+// contains the active query. Text/thinking blocks always count as visible —
+// hiding the model's narration around a tool call would strip the context
+// readers need to make sense of the match.
+function blockMatchesQuery(
+  b: NormBlock,
+  getResult: (id: string) => NormToolResult | undefined,
+  agentsByToolUse: Record<string, NormAgent>,
+  forceExpandedAgents: Set<string> | undefined,
+  q: string,
+): boolean {
+  if (!q) return true;
+  if (b.type === "text" || b.type === "thinking") return true;
+  if (b.type !== "tool_use") return true;
+  if ((b.name === "Agent" || b.name === "Task") && b.id) {
+    const agent = agentsByToolUse[b.id];
+    if (agent && forceExpandedAgents?.has(agent.id)) return true;
+  }
+  if (b.name && b.name.toLowerCase().includes(q)) return true;
+  if (b.input && JSON.stringify(b.input).toLowerCase().includes(q)) return true;
+  const r = b.id ? getResult(b.id) : undefined;
+  if (r) {
+    const c = r.content;
+    let s = "";
+    if (typeof c === "string") s = c;
+    else if (Array.isArray(c)) {
+      for (const part of c) {
+        if (part && typeof part === "object" && (part as { type?: string }).type === "text") {
+          const t = (part as { text?: string }).text;
+          if (typeof t === "string") s += t;
+        }
+      }
+    }
+    if (s.toLowerCase().includes(q)) return true;
+  }
+  return false;
+}
+
+function Blocks({ entries, getResult, agentsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, permalinks = true, toolFilter }: {
+  entries: BlockEntry[];
   getResult: (id: string) => NormToolResult | undefined;
   agentsByToolUse: Record<string, NormAgent>;
   onOpenAgent: (id: string) => void;
   settings: ViewSettings;
   taskStateById: Map<string, TaskSnapshot[]>;
+  query?: string;
+  forceExpandedAgents?: Set<string>;
+  permalinks?: boolean;
+  toolFilter?: Set<string>;
 }) {
+  const q = (query || "").trim().toLowerCase();
+  const showAll = q.length < 3;
+  const hasToolFilter = !!toolFilter && toolFilter.size > 0;
+  let hidden = 0;
+  const rendered: React.ReactNode[] = [];
+  // Wraps each rendered block with the hover-revealed permalink. Subagent
+  // transcripts pass permalinks={false}: the URLs they'd produce can't be
+  // resolved by the main-view scroll lookup yet.
+  const wrap = (key: number | string, b: NormBlock, msgUuid: string, idxInMsg: number, node: React.ReactNode): React.ReactNode => {
+    if (!permalinks) return <div key={key}>{node}</div>;
+    const blockId = b.id || `${msgUuid}:${idxInMsg}`;
+    return (
+      <BlockAnchor key={key} msgKey={msgUuid} blockId={blockId} entityLabel={entityLabelFor(b)}>
+        {node}
+      </BlockAnchor>
+    );
+  };
+  entries.forEach((entry, i) => {
+    const { b, msgUuid, idxInMsg } = entry;
+    if (!showAll && !blockMatchesQuery(b, getResult, agentsByToolUse, forceExpandedAgents, q)) {
+      hidden++;
+      return;
+    }
+    if (hasToolFilter && !blockMatchesToolFilter(b, toolFilter)) {
+      if (b.type === "tool_use") hidden++;
+      return;
+    }
+    if (b.type === "text") {
+      if (b.text?.trim()) rendered.push(wrap(i, b, msgUuid, idxInMsg, <div className="blk text"><div className="md"><Markdown text={b.text} /></div></div>));
+      return;
+    }
+    if (b.type === "thinking") {
+      rendered.push(wrap(i, b, msgUuid, idxInMsg, <ThinkingBlock text={b.thinking || ""} defaultOpen={settings.expandThinking} />));
+      return;
+    }
+    if (b.type === "tool_use") {
+      if (b.name === "Agent" || b.name === "Task") {
+        const agent = b.id ? agentsByToolUse[b.id] : undefined;
+        const force = !!(agent && forceExpandedAgents?.has(agent.id));
+        rendered.push(wrap(i, b, msgUuid, idxInMsg,
+          <AgentSpawnCard
+            block={b}
+            agent={agent}
+            onOpen={onOpenAgent}
+            settings={settings}
+            query={query}
+            forceExpanded={force}
+          />,
+        ));
+        return;
+      }
+      const tasks = b.id ? taskStateById.get(b.id) || [] : [];
+      if (b.name === "TaskCreate") { rendered.push(wrap(i, b, msgUuid, idxInMsg, <TaskCreateCard block={b} result={b.id ? getResult(b.id) : undefined} tasks={tasks} />)); return; }
+      if (b.name === "TaskUpdate") { rendered.push(wrap(i, b, msgUuid, idxInMsg, <TaskUpdateCard block={b} result={b.id ? getResult(b.id) : undefined} tasks={tasks} />)); return; }
+      if (b.name === "AskUserQuestion") { rendered.push(wrap(i, b, msgUuid, idxInMsg, <AskUserQuestionCard block={b} result={b.id ? getResult(b.id) : undefined} />)); return; }
+      if (b.name && b.name.startsWith("Task")) { rendered.push(wrap(i, b, msgUuid, idxInMsg, <TaskGenericCard block={b} result={b.id ? getResult(b.id) : undefined} tasks={tasks} defaultOpen={settings.expandTools} />)); return; }
+      rendered.push(wrap(i, b, msgUuid, idxInMsg, <ToolCard block={b} result={b.id ? getResult(b.id) : undefined} defaultOpen={settings.expandTools} />));
+    }
+  });
   return (
     <>
-      {blocks.map((b, i) => {
-        if (b.type === "text") return b.text?.trim() ? <div className="blk text" key={i}><div className="md"><Markdown text={b.text} /></div></div> : null;
-        if (b.type === "thinking") return <ThinkingBlock key={i} text={b.thinking || ""} defaultOpen={settings.expandThinking} />;
-        if (b.type === "tool_use") {
-          if (b.name === "Agent" || b.name === "Task")
-            return <AgentSpawnCard key={i} block={b} agent={b.id ? agentsByToolUse[b.id] : undefined} onOpen={onOpenAgent} />;
-          const tasks = b.id ? taskStateById.get(b.id) || [] : [];
-          if (b.name === "TaskCreate")
-            return <TaskCreateCard key={i} block={b} result={b.id ? getResult(b.id) : undefined} tasks={tasks} />;
-          if (b.name === "TaskUpdate")
-            return <TaskUpdateCard key={i} block={b} result={b.id ? getResult(b.id) : undefined} tasks={tasks} />;
-          if (b.name === "AskUserQuestion")
-            return <AskUserQuestionCard key={i} block={b} result={b.id ? getResult(b.id) : undefined} />;
-          if (b.name && b.name.startsWith("Task"))
-            return <TaskGenericCard key={i} block={b} result={b.id ? getResult(b.id) : undefined} tasks={tasks} defaultOpen={settings.expandTools} />;
-          return <ToolCard key={i} block={b} result={b.id ? getResult(b.id) : undefined} defaultOpen={settings.expandTools} />;
-        }
-        return null;
-      })}
+      {rendered}
+      {hidden > 0 ? (
+        <div className="blk-hidden" title={`${hidden} non-matching tool call${hidden === 1 ? "" : "s"} hidden by the search filter`}>
+          + {hidden} hidden tool call{hidden === 1 ? "" : "s"}
+        </div>
+      ) : null}
     </>
   );
 }
 
-function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settings, taskStateById, extraClass = "" }: {
+// Spawn card. Renders the subagent's transcript inline when expanded; the
+// `→` button still opens the side drawer. When the parent transcript is
+// filtering by a query and this subagent's transcript contained a hit,
+// `forceExpanded` is set so the card opens automatically — and we pass the
+// query into the inner Transcript so it filters to just the matching lines.
+function AgentSpawnCard({ block, agent, onOpen, settings, query, forceExpanded }: {
+  block: NormBlock;
+  agent?: NormAgent;
+  onOpen: (id: string) => void;
+  settings?: ViewSettings;
+  query?: string;
+  forceExpanded?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const expandable = !!agent && agent.messages.length > 0;
+  const expanded = expandable && (open || !!forceExpanded);
+  const type = (block.input?.subagent_type as string) || (agent?.agentType || "agent");
+  const hue = agent ? agentMeta(agent.agentType).hue : agentMeta(type).hue;
+  const col = `oklch(0.70 0.12 ${hue})`;
+  const modelStr = agent ? agent.model : (block.input?.model as string | undefined);
+  return (
+    <div className={"agent-spawn fade-in " + (expanded ? "is-expanded " : "") + (!agent ? "is-pending" : "")} style={{ "--ac": col } as React.CSSProperties}>
+      <div
+        className="agent-spawn-row"
+        role={expandable ? "button" : undefined}
+        tabIndex={expandable ? 0 : undefined}
+        onClick={() => expandable && setOpen(o => !o)}
+        onKeyDown={(e) => {
+          if (!expandable) return;
+          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(o => !o); }
+        }}
+      >
+        <span className="agent-spawn-ic" style={{ color: col, background: `color-mix(in oklch, ${col} 16%, transparent)` }}>
+          <Icons.agent size={16} />
+        </span>
+        <div className="agent-spawn-main">
+          <div className="agent-spawn-top">
+            <span className="agent-spawn-type" style={{ color: col }}>{type}</span>
+            {modelStr ? (
+              <span className="model-badge sm" style={{ "--mc": modelColor(modelStr) } as React.CSSProperties}>
+                <span className="model-dot" />{modelLabel(modelStr)}
+              </span>
+            ) : null}
+            <span className="agent-spawn-arrow">Subagent</span>
+          </div>
+          <div className="agent-spawn-desc">{block.input?.description || ""}</div>
+          {agent ? (
+            <div className="agent-spawn-stats">
+              <span><Icons.layers size={11} /> {agent.msgCount} msgs</span>
+              <span><Icons.terminal size={11} /> {Object.values(agent.toolCounts).reduce((a, b) => a + b, 0)} tools</span>
+              <span><Icons.clock size={11} /> {fmtDur(agent.durationMs)}</span>
+              <span style={{ color: "var(--accent)" }}>{fmtCost(agent.usage.cost)}</span>
+            </div>
+          ) : null}
+        </div>
+        {expandable ? (
+          <div className="agent-spawn-actions" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="agent-spawn-expand"
+              onClick={() => setOpen(o => !o)}
+              disabled={!!forceExpanded}
+              aria-expanded={expanded}
+              title={forceExpanded ? "Auto-expanded — clear the search to hide" : expanded ? "Hide transcript" : "Show transcript inline"}
+            >
+              <Caret open={expanded} />
+              <span>{expanded ? "hide" : "expand"}</span>
+            </button>
+            <button
+              type="button"
+              className="agent-spawn-go"
+              onClick={() => onOpen(agent!.id)}
+              title="Open in side panel"
+              aria-label="Open subagent details"
+            >
+              <Icons.arrowRight size={15} />
+            </button>
+          </div>
+        ) : null}
+      </div>
+      {expanded && agent && settings ? (
+        <div className="agent-spawn-transcript">
+          <Transcript
+            messages={agent.messages}
+            toolResults={agent.toolResults}
+            agentsByToolUse={{}}
+            onOpenAgent={onOpen}
+            settings={settings}
+            query={query}
+            permalinks={false}
+          />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, extraClass = "", permalinks = true, toolFilter }: {
   group: Group;
   getResult: (id: string) => NormToolResult | undefined;
   agentsByToolUse: Record<string, NormAgent>;
   onOpenAgent: (id: string) => void;
   settings: ViewSettings;
   taskStateById: Map<string, TaskSnapshot[]>;
+  query?: string;
+  forceExpandedAgents?: Set<string>;
   extraClass?: string;
+  permalinks?: boolean;
+  toolFilter?: Set<string>;
 }) {
   const msgs = group.msgs!;
   const fam = modelFamily(group.model);
@@ -99,7 +311,7 @@ function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settin
   const skill = msgs.find(m => m.attributionSkill)?.attributionSkill;
   const lastStop = msgs[msgs.length - 1].stopReason;
   const steps = msgs.length;
-  const allBlocks = msgs.flatMap(m => m.blocks);
+  const allBlocks: BlockEntry[] = msgs.flatMap(m => m.blocks.map((b, i) => ({ b, msgUuid: m.uuid, idxInMsg: i })));
   return (
     <div className={"msg asst " + (extraClass || "fade-in")} style={{ "--mc": `var(--${fam})` } as React.CSSProperties}>
       <div className="msg-gutter">
@@ -116,13 +328,14 @@ function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settin
           {steps > 1 ? <span className="steps-badge tnum" title={steps + " model turns combined"}>{steps} steps</span> : null}
           {skill ? <span className="skill-badge">{skill}</span> : null}
           <span className="msg-time">{fmtTime(msgs[0].ts)}</span>
+          {permalinks ? <MsgPermalink msgKey={group.key} /> : null}
           {lastStop && lastStop !== "end_turn" && lastStop !== "tool_use" ? <span className="stop-badge">{lastStop}</span> : null}
           <span className="msg-head-spacer" />
           <UsageChips u={usage} compact />
           {usage.cost > 0 ? <span className="msg-cost tnum">{fmtCost(usage.cost)}</span> : null}
         </div>
         <div className="msg-blocks">
-          <Blocks blocks={allBlocks} getResult={getResult} agentsByToolUse={agentsByToolUse} onOpenAgent={onOpenAgent} settings={settings} taskStateById={taskStateById} />
+          <Blocks entries={allBlocks} getResult={getResult} agentsByToolUse={agentsByToolUse} onOpenAgent={onOpenAgent} settings={settings} taskStateById={taskStateById} query={query} forceExpandedAgents={forceExpandedAgents} permalinks={permalinks} toolFilter={toolFilter} />
         </div>
       </div>
     </div>
@@ -194,7 +407,7 @@ function buildTaskStateById(messages: NormMsg[], toolResults: Record<string, Nor
   return snapshots;
 }
 
-function LiveTail({ live }: { live: boolean }) {
+export function LiveTail({ live }: { live: boolean }) {
   return (
     <div className={"live-tail " + (live ? "is-live" : "")} aria-label={live ? "Watching for new messages" : "Paused"}>
       <span /><span /><span />
@@ -202,7 +415,7 @@ function LiveTail({ live }: { live: boolean }) {
   );
 }
 
-function ConversationEnd() {
+export function ConversationEnd() {
   return (
     <div className="conv-end" aria-label="End of conversation">
       <span className="conv-end-line" />
@@ -212,25 +425,89 @@ function ConversationEnd() {
   );
 }
 
-export function Transcript({ messages, toolResults, agentsByToolUse, onOpenAgent, settings, query = "", live = false }: {
+export interface TranscriptModel {
+  groups: Group[];
+  filtered: Group[];
+  forceExpandedAgents: Set<string>;
+  taskStateById: Map<string, TaskSnapshot[]>;
+  newKeys: Set<string>;
+  getResult: (id: string) => NormToolResult | undefined;
+  q: string;
+}
+
+// All the filtering + animation state lives in this hook so we can drive
+// either the flat fallback renderer or a virtualized renderer (Virtuoso)
+// from the same source of truth.
+export function useTranscriptModel({ messages, toolResults, agentsByToolUse, query, toolFilter }: {
   messages: NormMsg[];
   toolResults: Record<string, NormToolResult>;
   agentsByToolUse: Record<string, NormAgent>;
-  onOpenAgent: (id: string) => void;
-  settings: ViewSettings;
-  query?: string;
-  live?: boolean;
-}) {
-  const getResult = (id: string) => toolResults[id];
+  query: string;
+  toolFilter?: Set<string>;
+}): TranscriptModel {
   const groups = useMemo(() => buildGroups(messages), [messages]);
   const taskStateById = useMemo(() => buildTaskStateById(messages, toolResults), [messages, toolResults]);
   const q = query.trim().toLowerCase();
-  const filtered = q ? groups.filter(g => {
-    const src = g.kind === "user-tasknote"
-      ? g.msg!.blocks
-      : (g.msgs || []).flatMap(m => m.blocks);
-    return JSON.stringify(src).toLowerCase().includes(q);
-  }) : groups;
+  const tf = toolFilter && toolFilter.size > 0 ? toolFilter : null;
+
+  const groupHaystack = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const g of groups) {
+      const blocks = g.kind === "user-tasknote" ? g.msg!.blocks : (g.msgs || []).flatMap(x => x.blocks);
+      m.set(g.key, JSON.stringify(blocks).toLowerCase());
+    }
+    return m;
+  }, [groups]);
+
+  const agentHaystack = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const id in agentsByToolUse) {
+      const a = agentsByToolUse[id];
+      if (m.has(a.id)) continue;
+      m.set(a.id, JSON.stringify({ m: a.messages, r: a.toolResults }).toLowerCase());
+    }
+    return m;
+  }, [agentsByToolUse]);
+
+  const { filtered, forceExpandedAgents } = useMemo(() => {
+    // tool filter narrows to assistant groups that actually contain one of
+    // the selected tool calls. user / user-tasknote groups don't have a
+    // tool-name to match on, so they fall away when a tool filter is on.
+    let working = groups;
+    if (tf) {
+      working = groups.filter(g => {
+        if (g.kind !== "assistant") return false;
+        for (const m of g.msgs || []) {
+          for (const b of m.blocks) {
+            if (b.type === "tool_use" && b.name && tf.has(b.name)) return true;
+          }
+        }
+        return false;
+      });
+    }
+    if (!q) return { filtered: working, forceExpandedAgents: new Set<string>() };
+    const expanded = new Set<string>();
+    const kept = working.filter(g => {
+      if (g.kind === "user-tasknote") {
+        if (groupHaystack.get(g.key)?.includes(q)) return true;
+        const tn = isUserTaskNotification(g.msg!);
+        const a = tn ? agentsByToolUse[tn.toolUseId] : undefined;
+        if (a && agentHaystack.get(a.id)?.includes(q)) { expanded.add(a.id); return true; }
+        return false;
+      }
+      let keep = !!groupHaystack.get(g.key)?.includes(q);
+      for (const m of g.msgs || []) {
+        for (const b of m.blocks) {
+          if (b.type !== "tool_use") continue;
+          if (b.name !== "Agent" && b.name !== "Task") continue;
+          const a = b.id ? agentsByToolUse[b.id] : undefined;
+          if (a && agentHaystack.get(a.id)?.includes(q)) { expanded.add(a.id); keep = true; }
+        }
+      }
+      return keep;
+    });
+    return { filtered: kept, forceExpandedAgents: expanded };
+  }, [groups, q, tf, agentsByToolUse, groupHaystack, agentHaystack]);
 
   const seenKeysRef = useRef<Set<string> | null>(null);
   const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
@@ -259,20 +536,78 @@ export function Transcript({ messages, toolResults, agentsByToolUse, onOpenAgent
     return () => clearTimeout(t);
   }, [groups]);
 
+  const getResult = (id: string) => toolResults[id];
+  return { groups, filtered, forceExpandedAgents, taskStateById, newKeys, getResult, q };
+}
+
+// One rendered transcript row. Exported so the virtualized renderer in
+// ConversationView can call it for each Virtuoso item.
+export function GroupRow({ g, model, agentsByToolUse, onOpenAgent, settings, query, permalinks = true, toolFilter }: {
+  g: Group;
+  model: TranscriptModel;
+  agentsByToolUse: Record<string, NormAgent>;
+  onOpenAgent: (id: string) => void;
+  settings: ViewSettings;
+  query: string;
+  permalinks?: boolean;
+  toolFilter?: Set<string>;
+}) {
+  const extra = model.newKeys.has(g.key) ? "slide-in-right" : "";
+  if (g.kind === "user-tasknote") {
+    return <UserMessage msg={g.msg!} agentsByToolUse={agentsByToolUse} onOpenAgent={onOpenAgent} extraClass={extra} />;
+  }
+  if (g.kind === "user") {
+    return <UserGroup msgs={g.msgs!} extraClass={extra} permalinks={permalinks} />;
+  }
+  return (
+    <AssistantGroup
+      group={g}
+      getResult={model.getResult}
+      agentsByToolUse={agentsByToolUse}
+      onOpenAgent={onOpenAgent}
+      settings={settings}
+      taskStateById={model.taskStateById}
+      query={query}
+      forceExpandedAgents={model.forceExpandedAgents}
+      extraClass={extra}
+      permalinks={permalinks}
+      toolFilter={toolFilter}
+    />
+  );
+}
+
+export function Transcript({ messages, toolResults, agentsByToolUse, onOpenAgent, settings, query = "", live = false, permalinks = true, toolFilter }: {
+  messages: NormMsg[];
+  toolResults: Record<string, NormToolResult>;
+  agentsByToolUse: Record<string, NormAgent>;
+  onOpenAgent: (id: string) => void;
+  settings: ViewSettings;
+  query?: string;
+  live?: boolean;
+  permalinks?: boolean;
+  toolFilter?: Set<string>;
+}) {
+  const model = useTranscriptModel({ messages, toolResults, agentsByToolUse, query, toolFilter });
+  const { filtered, q } = model;
+  const hasToolFilter = !!toolFilter && toolFilter.size > 0;
   return (
     <div className="transcript">
-      {filtered.map(g => {
-        const extra = newKeys.has(g.key) ? "slide-in-right" : "";
-        if (g.kind === "user-tasknote") {
-          return <UserMessage key={g.key} msg={g.msg!} agentsByToolUse={agentsByToolUse} onOpenAgent={onOpenAgent} extraClass={extra} />;
-        }
-        if (g.kind === "user") {
-          return <UserGroup key={g.key} msgs={g.msgs!} extraClass={extra} />;
-        }
-        return <AssistantGroup key={g.key} group={g} getResult={getResult} agentsByToolUse={agentsByToolUse} onOpenAgent={onOpenAgent} settings={settings} taskStateById={taskStateById} extraClass={extra} />;
-      })}
-      {!q && filtered.length > 0 ? (live ? <LiveTail live /> : <ConversationEnd />) : null}
+      {filtered.map(g => (
+        <GroupRow
+          key={g.key}
+          g={g}
+          model={model}
+          agentsByToolUse={agentsByToolUse}
+          onOpenAgent={onOpenAgent}
+          settings={settings}
+          query={query}
+          permalinks={permalinks}
+          toolFilter={toolFilter}
+        />
+      ))}
+      {!q && !hasToolFilter && filtered.length > 0 ? (live ? <LiveTail live /> : <ConversationEnd />) : null}
       {q && !filtered.length ? <div className="empty">no messages match "{query}"</div> : null}
+      {!q && hasToolFilter && !filtered.length ? <div className="empty">no messages match the selected tools</div> : null}
     </div>
   );
 }

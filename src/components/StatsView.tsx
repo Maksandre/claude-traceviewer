@@ -1,10 +1,72 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { agentColor, agentMeta, fmtClock, fmtCost, fmtDur, fmtTokens, modelColor, modelLabel, toolColor } from "../lib/format";
 import { Icons, toolIcon } from "../lib/icons";
 import { Bar } from "../lib/md";
 import type { NormTrace } from "../lib/normalize";
 
 interface Props { trace: NormTrace; onOpenAgent: (id: string) => void; }
+
+/* Extract a meaningful identity key from a tool_use input — the "what was this
+   call against?" string we group by. file_path for file tools, command for
+   Bash, pattern for search tools, etc. Returns null when the tool is not
+   worth breaking down (no stable key). */
+function toolItemKey(name: string, input: Record<string, any> | undefined): string | null {
+  if (!input) return null;
+  switch (name) {
+    case "Read":
+    case "Edit":
+    case "Write":
+    case "MultiEdit":
+      return (input.file_path as string) || null;
+    case "NotebookEdit":
+    case "NotebookRead":
+      return (input.notebook_path as string) || (input.file_path as string) || null;
+    case "LS":
+      return (input.path as string) || null;
+    case "Bash": {
+      const cmd = (input.command as string) || "";
+      return cmd ? (cmd.length > 140 ? cmd.slice(0, 137) + "…" : cmd) : null;
+    }
+    case "Grep": {
+      const pat = (input.pattern as string) || "";
+      const path = (input.path as string) || "";
+      return pat ? (path ? `${pat}  in  ${path}` : pat) : null;
+    }
+    case "Glob":
+      return (input.pattern as string) || null;
+    case "WebFetch":
+      return (input.url as string) || null;
+    case "WebSearch":
+      return (input.query as string) || null;
+    case "Agent":
+    case "Task": {
+      const t = (input.subagent_type as string) || "agent";
+      const d = (input.description as string) || "";
+      return d ? `${t} — ${d}` : t;
+    }
+    default:
+      return null;
+  }
+}
+
+function buildToolUsage(trace: NormTrace): Record<string, Record<string, number>> {
+  const out: Record<string, Record<string, number>> = {};
+  const walk = (msgs: NormTrace["main"]["messages"]) => {
+    for (const m of msgs) {
+      if (m.role !== "assistant") continue;
+      for (const b of m.blocks) {
+        if (b.type !== "tool_use" || !b.name) continue;
+        const key = toolItemKey(b.name, b.input);
+        if (!key) continue;
+        const bucket = (out[b.name] ||= {});
+        bucket[key] = (bucket[key] || 0) + 1;
+      }
+    }
+  };
+  walk(trace.main.messages);
+  for (const a of trace.agents) walk(a.messages);
+  return out;
+}
 
 function BigStat({ icon: Ic, label, value, sub, color, accent }: {
   icon: (p?: { size?: number }) => React.ReactElement;
@@ -85,22 +147,175 @@ function ModelMix({ mix }: { mix: Record<string, number> }) {
   );
 }
 
-function ToolFreq({ freq }: { freq: Record<string, number> }) {
+function looksLikePath(s: string): boolean {
+  return /^(?:[a-z]:)?\/|^~\/|^\.\.?\//i.test(s) || s.includes("/");
+}
+
+/* Strip the project-dir prefix so files in the project show as "src/foo.ts"
+   instead of "/Users/me/.../project/src/foo.ts". The full path is kept on
+   the row for the copy action. */
+function relToProject(p: string, projectDir: string): string {
+  if (!projectDir) return p;
+  const root = projectDir.replace(/\/+$/, "");
+  if (p === root) return ".";
+  if (p.startsWith(root + "/")) return p.slice(root.length + 1);
+  return p;
+}
+
+function shortenPath(p: string): { head: string; tail: string } {
+  if (!looksLikePath(p)) return { head: "", tail: p };
+  const idx = p.lastIndexOf("/");
+  if (idx < 0) return { head: "", tail: p };
+  return { head: p.slice(0, idx + 1), tail: p.slice(idx + 1) };
+}
+
+const FILE_TOOLS = new Set(["Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "NotebookRead", "LS"]);
+
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* fall through */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.select();
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch { return false; }
+}
+
+function ToolDetailRow({ fullKey, displayKey, count, max, color, copyable }: {
+  fullKey: string;
+  displayKey: string;
+  count: number;
+  max: number;
+  color: string;
+  copyable: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+  const onCopy = async () => {
+    if (!copyable) return;
+    const ok = await copyText(fullKey);
+    if (!ok) return;
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1100);
+  };
+  const { head, tail } = shortenPath(displayKey);
+  const title = copyable ? `${fullKey} — click to copy` : fullKey;
+  return (
+    <div
+      role={copyable ? "button" : undefined}
+      tabIndex={copyable ? 0 : undefined}
+      className={"tf-detail-row " + (copyable ? "tf-copy" : "") + (copied ? " is-copied" : "")}
+      title={title}
+      onClick={onCopy}
+      onKeyDown={(e) => { if (copyable && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onCopy(); } }}
+    >
+      <span className="tf-detail-key mono">
+        {head ? <span className="tf-detail-dir">{head}</span> : null}
+        <span className="tf-detail-name">{tail}</span>
+        {copied ? <span className="tf-detail-copied">copied</span> : null}
+      </span>
+      <span className="tf-detail-bar"><Bar pct={count / max} color={color} h={5} /></span>
+      <span className="tf-detail-count tnum">{count}</span>
+    </div>
+  );
+}
+
+function ToolDetail({ name, items, color, projectDir }: {
+  name: string;
+  items: Record<string, number>;
+  color: string;
+  projectDir: string;
+}) {
+  const entries = Object.entries(items).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]));
+  if (entries.length === 0) {
+    return <div className="tf-detail-empty">no per-call detail captured for {name}</div>;
+  }
+  const max = Math.max(...entries.map(e => e[1]), 1);
+  const total = entries.reduce((a, [, v]) => a + v, 0);
+  const isFileTool = FILE_TOOLS.has(name);
+  const label = ({
+    Read: "files read", Edit: "files edited", Write: "files written",
+    MultiEdit: "files edited", NotebookEdit: "notebooks edited", NotebookRead: "notebooks read",
+    LS: "paths listed", Bash: "commands", Grep: "patterns",
+    Glob: "patterns", WebFetch: "URLs", WebSearch: "queries",
+    Agent: "agents spawned", Task: "tasks spawned",
+  } as Record<string, string>)[name] || "items";
+  return (
+    <div className="tf-detail">
+      <div className="tf-detail-head">
+        <span>{entries.length} unique {label}{isFileTool ? " · click to copy full path" : ""}</span>
+        <span className="tf-detail-total tnum">{total} calls</span>
+      </div>
+      <div className="tf-detail-list">
+        {entries.map(([key, count]) => {
+          const display = isFileTool ? relToProject(key, projectDir) : key;
+          return (
+            <ToolDetailRow
+              key={key}
+              fullKey={key}
+              displayKey={display}
+              count={count}
+              max={max}
+              color={color}
+              copyable={isFileTool}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ToolFreq({ freq, usage, projectDir }: {
+  freq: Record<string, number>;
+  usage: Record<string, Record<string, number>>;
+  projectDir: string;
+}) {
   const entries = Object.entries(freq).sort((a, b) => b[1] - a[1]);
   const max = Math.max(...entries.map(e => e[1]), 1);
   const total = entries.reduce((a, [, v]) => a + v, 0);
+  const [openTool, setOpenTool] = useState<string | null>(null);
   if (entries.length === 0) return <div className="empty">no tool calls</div>;
   return (
     <div>
-      <div className="toolfreq-total">{total} total tool calls across session</div>
+      <div className="toolfreq-total">{total} total tool calls across session · click a row for breakdown</div>
       {entries.map(([name, count]) => {
         const TI = toolIcon(name);
         const col = toolColor(name);
+        const isOpen = openTool === name;
+        const items = usage[name];
+        const expandable = !!items && Object.keys(items).length > 0;
         return (
-          <div className="tf-row" key={name}>
-            <span className="tf-name"><span className="tf-ic" style={{ color: col }}><TI size={13} /></span>{name}</span>
-            <span><Bar pct={count / max} color={col} h={8} /></span>
-            <span className="tf-count tnum">{count}</span>
+          <div key={name} className={"tf-group " + (isOpen ? "open" : "")}>
+            <button
+              type="button"
+              className={"tf-row " + (expandable ? "tf-clickable" : "tf-static") + (isOpen ? " is-open" : "")}
+              onClick={() => expandable && setOpenTool(isOpen ? null : name)}
+              disabled={!expandable}
+              aria-expanded={isOpen}
+            >
+              <span className="tf-name">
+                {expandable ? (
+                  <span className="tf-caret">
+                    <Icons.chevron size={11} style={{ transform: isOpen ? "rotate(90deg)" : "none", transition: "transform .15s" }} />
+                  </span>
+                ) : <span className="tf-caret tf-caret-placeholder" />}
+                <span className="tf-ic" style={{ color: col }}><TI size={13} /></span>
+                {name}
+              </span>
+              <span><Bar pct={count / max} color={col} h={8} /></span>
+              <span className="tf-count tnum">{count}</span>
+            </button>
+            {isOpen && expandable ? <ToolDetail name={name} items={items} color={col} projectDir={projectDir} /> : null}
           </div>
         );
       })}
@@ -207,6 +422,7 @@ export function StatsView({ trace, onOpenAgent }: Props) {
   const s = trace.stats;
   const sess = trace.session;
   const totTok = useMemo(() => s.totals.input + s.totals.output + s.totals.cw + s.totals.cr, [s.totals]);
+  const toolUsage = useMemo(() => buildToolUsage(trace), [trace]);
   return (
     <div className="stats-view">
       <div className="bigstats">
@@ -234,8 +450,8 @@ export function StatsView({ trace, onOpenAgent }: Props) {
           <ModelMix mix={s.modelMix} />
         </Panel>
 
-        <Panel title="Tool usage frequency" span={2}>
-          <ToolFreq freq={s.toolFreq} />
+        <Panel title="Tool usage frequency" span={2} sub="click a tool for file/command breakdown">
+          <ToolFreq freq={s.toolFreq} usage={toolUsage} projectDir={sess.project} />
         </Panel>
 
         <Panel title="Per-agent breakdown" span={2} sub="click a row to inspect">

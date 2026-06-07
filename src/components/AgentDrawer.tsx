@@ -36,7 +36,7 @@ export function AgentDrawer({ agent, settings, onOpenAgent, onClose }: Props) {
           </button>
         </div>
         <div className="drawer-scroll">
-          <AgentDetail agent={agent} onOpenAgent={onOpenAgent} settings={settings} />
+          <AgentDetail key={agent.id} agent={agent} onOpenAgent={onOpenAgent} settings={settings} />
         </div>
       </div>
     </div>

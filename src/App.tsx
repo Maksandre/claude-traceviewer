@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useDeferredValue, useEffect, useMemo, useRef, useState, useTransition } from "react";
 import { Icons } from "./lib/icons";
 import { Sidebar } from "./components/Sidebar";
 import { Toolbar } from "./components/Toolbar";
@@ -8,6 +8,7 @@ import { StatsView } from "./components/StatsView";
 import { AgentDrawer } from "./components/AgentDrawer";
 import type { ProjectMeta, SessionInfo, TraceRecord } from "./types";
 import { fetchNormalizedTrace, type NormTrace } from "./lib/normalize";
+import { PermalinkContext } from "./lib/permalinkCtx";
 import "./App.css";
 
 export type ViewKey = "conversation" | "agents" | "stats";
@@ -21,13 +22,15 @@ function readInitialTheme(): Theme {
 }
 
 function readInitialFromUrl() {
-  if (typeof window === "undefined") return { project: null, session: null, view: "conversation" as ViewKey };
+  if (typeof window === "undefined") return { project: null, session: null, view: "conversation" as ViewKey, msg: null, block: null };
   const params = new URLSearchParams(window.location.search);
   const view = params.get("view");
   return {
     project: params.get("project"),
     session: params.get("session"),
     view: (view === "agents" || view === "stats" || view === "conversation" ? view : "conversation") as ViewKey,
+    msg: params.get("msg"),
+    block: params.get("block"),
   };
 }
 
@@ -47,7 +50,29 @@ function App() {
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
   const [theme, setTheme] = useState<Theme>(readInitialTheme);
   const [drawerId, setDrawerId] = useState<string | null>(null);
+  // `targetMsg` / `targetBlock` track the active deep-link target. The
+  // URL effect mirrors them into ?msg=&block= so the URL bar always
+  // reflects what's selected. ConversationView ref-gates the actual
+  // scroll-flash to once per (msg, block) pair so polling doesn't
+  // re-trigger it.
+  const [targetMsg, setTargetMsg] = useState<string | null>(initial.msg);
+  const [targetBlock, setTargetBlock] = useState<string | null>(initial.block);
+  const selectTarget = useCallback((msg: string, block: string | null) => {
+    setTargetMsg(msg);
+    setTargetBlock(block);
+  }, []);
+  const permalinkApi = useMemo(() => ({ selectTarget }), [selectTarget]);
   const [query, setQuery] = useState("");
+  // Search runs when the user presses Enter in the Toolbar. We wrap the
+  // state update in a transition so React can keep the input painted while
+  // it works through the heavy filter + highlight + re-render pass.
+  // `isSearching` drives the spinner shown back in the search box.
+  const [isSearching, startSearchTransition] = useTransition();
+  const submitQuery = useCallback((next: string) => {
+    startSearchTransition(() => setQuery(next));
+  }, []);
+  const deferredQuery = useDeferredValue(query);
+  const effectiveQuery = deferredQuery.trim().length >= 3 ? deferredQuery : "";
   const [showSearch, setShowSearch] = useState(false);
   const [focusAgentId, setFocusAgentId] = useState<string | null>(null);
   const [sidebarW, setSidebarW] = useState<number>(() => {
@@ -93,12 +118,14 @@ function App() {
     if (selectedProject) params.set("project", selectedProject);
     if (selectedSession) params.set("session", selectedSession);
     if (view !== "conversation") params.set("view", view);
+    if (targetMsg) params.set("msg", targetMsg);
+    if (targetBlock) params.set("block", targetBlock);
     const qs = params.toString();
     const next = qs ? `?${qs}` : window.location.pathname;
     if (window.location.search !== (qs ? `?${qs}` : "")) {
       window.history.replaceState(null, "", next);
     }
-  }, [selectedProject, selectedSession, view]);
+  }, [selectedProject, selectedSession, view, targetMsg, targetBlock]);
 
   // Tolerate both old (string[]) and new ({name,sessionCount,mtime}[]) API shapes
   // so a stale dev server doesn't blank the page on hot-reload.
@@ -134,7 +161,18 @@ function App() {
     fetch(`/api/projects/${encodeURIComponent(selectedProject)}/sessions/${encodeURIComponent(selectedSession)}`)
       .then(r => r.json())
       .then((data) => {
-        setRecords(Array.isArray(data) ? data : []);
+        const next: TraceRecord[] = Array.isArray(data) ? data : [];
+        setRecords(prev => {
+          // Polling: skip the re-normalize + re-render storm when the
+          // session hasn't actually grown or shifted.
+          if (prev.length === next.length) {
+            const a = prev[prev.length - 1];
+            const b = next[next.length - 1];
+            if (a === b) return prev;
+            if (a && b && a.uuid && a.uuid === b.uuid && a.timestamp === b.timestamp) return prev;
+          }
+          return next;
+        });
         setLoading(false);
         setLastUpdated(Date.now());
       })
@@ -166,19 +204,6 @@ function App() {
     return () => { cancelled = true; };
   }, [records, selectedProject, selectedSession]);
 
-  const [updatedLabel, setUpdatedLabel] = useState("");
-  useEffect(() => {
-    const tick = () => {
-      if (!lastUpdated) { setUpdatedLabel(""); return; }
-      const diff = Math.floor((Date.now() - lastUpdated) / 1000);
-      if (diff < 2) setUpdatedLabel("just now");
-      else if (diff < 60) setUpdatedLabel(`${diff}s ago`);
-      else setUpdatedLabel(`${Math.floor(diff / 60)}m ago`);
-    };
-    tick();
-    const id = setInterval(tick, 1000);
-    return () => clearInterval(id);
-  }, [lastUpdated]);
 
   const handleRefresh = useCallback(() => {
     setRefreshSpin(n => n + 1);
@@ -200,6 +225,7 @@ function App() {
   const hasSession = !!selectedSession;
 
   return (
+    <PermalinkContext.Provider value={permalinkApi}>
     <div
       className={"app " + (sidebarOpen ? "" : "no-sidebar") + (resizing ? " resizing" : "")}
       style={{ "--sidebar-w": sidebarOpen ? `${sidebarW}px` : "0px" } as React.CSSProperties}
@@ -207,10 +233,10 @@ function App() {
       <Sidebar
         projects={projects}
         selectedProject={selectedProject}
-        onSelectProject={(p) => { setSelectedProject(p); setSelectedSession(null); setRecords([]); }}
+        onSelectProject={(p) => { setSelectedProject(p); setSelectedSession(null); setRecords([]); setTargetMsg(null); setTargetBlock(null); }}
         sessions={sessions}
         selectedSession={selectedSession}
-        onSelectSession={setSelectedSession}
+        onSelectSession={(s) => { setSelectedSession(s); setTargetMsg(null); setTargetBlock(null); }}
         onDeleteSession={(id) => {
           fetch(`/api/projects/${encodeURIComponent(selectedProject!)}/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
             .then(() => {
@@ -234,15 +260,16 @@ function App() {
           refreshSpin={refreshSpin}
           autoRefresh={autoRefresh}
           onToggleAutoRefresh={() => setAutoRefresh(v => !v)}
-          updatedLabel={updatedLabel}
+          lastUpdated={lastUpdated}
           theme={theme}
           onToggleTheme={() => setTheme(t => t === "dark" ? "light" : "dark")}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen(o => !o)}
           query={query}
-          onQueryChange={setQuery}
+          onQueryChange={submitQuery}
           showSearch={showSearch}
           onShowSearch={setShowSearch}
+          searching={isSearching}
         />
         <div className="canvas">
           {!hasSession ? (
@@ -270,7 +297,7 @@ function App() {
           ) : !trace ? (
             <div className="empty-state"><div>Loading trace…</div></div>
           ) : view === "conversation" ? (
-            <ConversationView trace={trace} query={query} onOpenAgent={setDrawerId} settings={settings} live={isWorking} />
+            <ConversationView trace={trace} query={effectiveQuery} onOpenAgent={setDrawerId} settings={settings} live={isWorking} targetMsg={targetMsg} targetBlock={targetBlock} />
           ) : view === "agents" ? (
             <AgentsView
               trace={trace}
@@ -291,6 +318,7 @@ function App() {
         onClose={() => setDrawerId(null)}
       />
     </div>
+    </PermalinkContext.Provider>
   );
 }
 
