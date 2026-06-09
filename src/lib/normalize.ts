@@ -377,7 +377,7 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
   addUsage(allTotals, mainNorm.usage);
   for (const a of agents) addUsage(allTotals, a.usage);
 
-  const modelMix: Record<ModelFamily, number> = { opus: 0, sonnet: 0, haiku: 0 };
+  const modelMix: Record<ModelFamily, number> = { fable: 0, opus: 0, sonnet: 0, haiku: 0 };
   for (const m of mainNorm.messages) {
     if (m.role !== "assistant") continue;
     modelMix[modelFamily(m.model)] += m.usage.input + m.usage.output + m.usage.cw + m.usage.cr;

@@ -47,10 +47,11 @@ export function relTime(iso?: string | null): string {
   return Math.floor(diff / day) + "d ago";
 }
 
-export type ModelFamily = "opus" | "sonnet" | "haiku";
+export type ModelFamily = "fable" | "opus" | "sonnet" | "haiku";
 
 export function modelFamily(m?: string | null): ModelFamily {
   const s = m || "";
+  if (s.includes("fable")) return "fable";
   if (s.includes("opus")) return "opus";
   if (s.includes("haiku")) return "haiku";
   return "sonnet";
@@ -59,7 +60,7 @@ export function modelFamily(m?: string | null): ModelFamily {
 export function modelLabel(m?: string | null): string {
   const fam = modelFamily(m);
   const cap = fam.charAt(0).toUpperCase() + fam.slice(1);
-  const match = (m || "").match(/(\d+[-.]\d+)/);
+  const match = (m || "").match(/(\d+(?:[-.]\d+)?)/);
   const ver = match?.[1];
   return ver ? `${cap} ${ver.replace("-", ".")}` : cap;
 }
@@ -122,6 +123,7 @@ const PRICING_BY_ID = pricingSnapshot as unknown as Record<string, PerTokenRates
 
 /* family-level fallback (USD per token), used when an id isn't in the snapshot */
 const FAMILY_FALLBACK: Record<ModelFamily, PerTokenRates> = {
+  fable:  { input_cost_per_token: 10e-6, output_cost_per_token: 50e-6, cache_creation_input_token_cost: 12.5e-6,  cache_read_input_token_cost: 1.0e-6 },
   opus:   { input_cost_per_token: 15e-6, output_cost_per_token: 75e-6, cache_creation_input_token_cost: 18.75e-6, cache_read_input_token_cost: 1.5e-6 },
   sonnet: { input_cost_per_token:  3e-6, output_cost_per_token: 15e-6, cache_creation_input_token_cost:  3.75e-6, cache_read_input_token_cost: 0.30e-6 },
   haiku:  { input_cost_per_token:  1e-6, output_cost_per_token:  5e-6, cache_creation_input_token_cost:  1.25e-6, cache_read_input_token_cost: 0.10e-6 },

@@ -1,4 +1,10 @@
 {
+  "claude-fable-5": {
+    "input_cost_per_token": 1e-05,
+    "output_cost_per_token": 5e-05,
+    "cache_creation_input_token_cost": 1.25e-05,
+    "cache_read_input_token_cost": 1e-06
+  },
   "_meta": {
     "source": "https://raw.githubusercontent.com/BerriAI/litellm/main/litellm/model_prices_and_context_window_backup.json",
     "filter": "litellm_provider == 'anthropic' (direct Anthropic API rates, not Bedrock or Vertex)",
