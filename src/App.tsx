@@ -191,6 +191,42 @@ function App() {
     return () => clearInterval(id);
   }, [selectedProject, selectedSession, fetchSession, autoRefresh]);
 
+  // A subagent is "open" if the main session has an Agent/Task tool_use
+  // whose matching tool_result hasn't landed yet. While that's the case the
+  // subagent's own JSONL is appended to without touching the main JSONL, so
+  // the normal poll doesn't pull in the new lines — we need an extra tick.
+  const hasOpenSubagent = useMemo(() => {
+    const toolUseIds = new Set<string>();
+    const resultIds = new Set<string>();
+    for (const rec of records) {
+      const content = rec.message?.content;
+      if (!Array.isArray(content)) continue;
+      if (rec.type === "assistant") {
+        for (const b of content) {
+          if (b.type === "tool_use" && (b.name === "Agent" || b.name === "Task") && b.id) {
+            toolUseIds.add(b.id);
+          }
+        }
+      } else if (rec.type === "user") {
+        for (const b of content) {
+          if (b.type === "tool_result" && b.tool_use_id) resultIds.add(b.tool_use_id);
+        }
+      }
+    }
+    for (const id of toolUseIds) if (!resultIds.has(id)) return true;
+    return false;
+  }, [records]);
+
+  // Bumping this re-runs the normalize effect, which re-fetches every
+  // subagent's JSONL. The agent endpoint has conditional GET, so most of
+  // those round-trips short-circuit at 304.
+  const [subagentTick, setSubagentTick] = useState(0);
+  useEffect(() => {
+    if (!hasOpenSubagent || !autoRefresh) return;
+    const id = setInterval(() => setSubagentTick(t => t + 1), 2500);
+    return () => clearInterval(id);
+  }, [hasOpenSubagent, autoRefresh]);
+
   // normalize whenever records change
   useEffect(() => {
     let cancelled = false;
@@ -202,7 +238,7 @@ function App() {
       if (!cancelled) setTrace(t);
     });
     return () => { cancelled = true; };
-  }, [records, selectedProject, selectedSession]);
+  }, [records, selectedProject, selectedSession, subagentTick]);
 
 
   const handleRefresh = useCallback(() => {

@@ -298,6 +298,24 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
     }
     if (rec.type === "progress" && rec.data?.agentId) agentIds.add(rec.data.agentId);
   }
+  // Also list the subagents/ directory directly. While a subagent is running,
+  // the main JSONL may not yet contain its agentId — but Claude Code writes
+  // the meta + JSONL files immediately. Without this, the conversation can't
+  // link the spawn card to its running subagent until the first progress
+  // record lands in the main JSONL, leaving the card non-expandable.
+  try {
+    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/sessions/${encodeURIComponent(session)}/agents`);
+    if (r.ok) {
+      const list = await r.json();
+      if (Array.isArray(list)) {
+        for (const a of list) {
+          if (!a?.id) continue;
+          agentIds.add(a.id);
+          if (a.toolUseId) agentIdByToolUseId.set(a.toolUseId, a.id);
+        }
+      }
+    }
+  } catch { /* ignore — fall back to records-only discovery */ }
   for (const rec of records) {
     if (rec.type === "user" && rec.message?.content) {
       const content = rec.message.content;

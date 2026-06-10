@@ -209,8 +209,13 @@ function AgentSpawnCard({ block, agent, onOpen, settings, query, forceExpanded }
   forceExpanded?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const expandable = !!agent && agent.messages.length > 0;
-  const expanded = expandable && (open || !!forceExpanded);
+  // Inline transcript needs at least one rendered message (the prompt is
+  // stripped by normalizeRecords). The side-panel button is looser — as
+  // long as we found the agent, the drawer can show its stats and stream
+  // its transcript as it lands.
+  const inlineExpandable = !!agent && agent.messages.length > 0;
+  const openable = !!agent;
+  const expanded = inlineExpandable && (open || !!forceExpanded);
   const type = (block.input?.subagent_type as string) || (agent?.agentType || "agent");
   const hue = agent ? agentMeta(agent.agentType).hue : agentMeta(type).hue;
   const col = `oklch(0.70 0.12 ${hue})`;
@@ -219,12 +224,19 @@ function AgentSpawnCard({ block, agent, onOpen, settings, query, forceExpanded }
     <div className={"agent-spawn fade-in " + (expanded ? "is-expanded " : "") + (!agent ? "is-pending" : "")} style={{ "--ac": col } as React.CSSProperties}>
       <div
         className="agent-spawn-row"
-        role={expandable ? "button" : undefined}
-        tabIndex={expandable ? 0 : undefined}
-        onClick={() => expandable && setOpen(o => !o)}
+        role={openable ? "button" : undefined}
+        tabIndex={openable ? 0 : undefined}
+        onClick={() => {
+          if (inlineExpandable) setOpen(o => !o);
+          else if (openable) onOpen(agent!.id);
+        }}
         onKeyDown={(e) => {
-          if (!expandable) return;
-          if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(o => !o); }
+          if (!openable) return;
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            if (inlineExpandable) setOpen(o => !o);
+            else onOpen(agent!.id);
+          }
         }}
       >
         <span className="agent-spawn-ic" style={{ color: col, background: `color-mix(in oklch, ${col} 16%, transparent)` }}>
@@ -250,19 +262,21 @@ function AgentSpawnCard({ block, agent, onOpen, settings, query, forceExpanded }
             </div>
           ) : null}
         </div>
-        {expandable ? (
+        {openable ? (
           <div className="agent-spawn-actions" onClick={(e) => e.stopPropagation()}>
-            <button
-              type="button"
-              className="agent-spawn-expand"
-              onClick={() => setOpen(o => !o)}
-              disabled={!!forceExpanded}
-              aria-expanded={expanded}
-              title={forceExpanded ? "Auto-expanded — clear the search to hide" : expanded ? "Hide transcript" : "Show transcript inline"}
-            >
-              <Caret open={expanded} />
-              <span>{expanded ? "hide" : "expand"}</span>
-            </button>
+            {inlineExpandable ? (
+              <button
+                type="button"
+                className="agent-spawn-expand"
+                onClick={() => setOpen(o => !o)}
+                disabled={!!forceExpanded}
+                aria-expanded={expanded}
+                title={forceExpanded ? "Auto-expanded — clear the search to hide" : expanded ? "Hide transcript" : "Show transcript inline"}
+              >
+                <Caret open={expanded} />
+                <span>{expanded ? "hide" : "expand"}</span>
+              </button>
+            ) : null}
             <button
               type="button"
               className="agent-spawn-go"
