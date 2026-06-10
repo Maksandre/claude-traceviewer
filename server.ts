@@ -234,6 +234,30 @@ app.get("/api/projects/:project/sessions/:session/agents/:agentId", (req, res) =
     const agentFile = path.join(subagentsDir, `agent-${req.params.agentId}.jsonl`);
     const metaFile = path.join(subagentsDir, `agent-${req.params.agentId}.meta.json`);
 
+    // Conditional GET: the client polls this endpoint every few seconds while
+    // the subagent is running. The validator combines both files so that meta
+    // arriving after the first records still busts the cache.
+    const agentStat = fs.statSync(agentFile);
+    let metaMtimeMs = 0;
+    let metaSize = 0;
+    try {
+      const ms = fs.statSync(metaFile);
+      metaMtimeMs = ms.mtimeMs;
+      metaSize = ms.size;
+    } catch {}
+    const lastMtimeMs = Math.max(agentStat.mtimeMs, metaMtimeMs);
+    const lastModified = new Date(lastMtimeMs).toUTCString();
+    const etag = `"${agentStat.mtimeMs.toString(36)}-${agentStat.size.toString(36)}-${metaMtimeMs.toString(36)}-${metaSize.toString(36)}"`;
+    res.set("Cache-Control", "no-cache");
+    res.set("Last-Modified", lastModified);
+    res.set("ETag", etag);
+    const inm = req.header("if-none-match");
+    const ims = req.header("if-modified-since");
+    if ((inm && inm === etag) || (ims && new Date(ims).getTime() >= Math.floor(lastMtimeMs))) {
+      res.status(304).end();
+      return;
+    }
+
     const lines = fs.readFileSync(agentFile, "utf-8").split("\n").filter(Boolean);
     const records = lines.map((line) => {
       try { return JSON.parse(line); } catch { return null; }
