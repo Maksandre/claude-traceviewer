@@ -23,8 +23,14 @@ interface ProjectNode {
 }
 
 function decodeProject(p: ProjectMeta): ProjectNode {
-  const cleaned = p.name.replace(/^-Users-[^-]+-/, "").replace(/-/g, "/");
-  const parts = cleaned.split("/").filter(Boolean);
+  // Prefer the real working directory. Claude Code's encoded `name` replaces
+  // every "/" with "-", so a folder that legitimately contains dashes (e.g.
+  // "2026-05-subtensor") is indistinguishable from a nested path and would
+  // wrongly render as "2026/05/subtensor". The recorded cwd is unambiguous.
+  const cwd = (p.cwd || "").trim();
+  const parts = cwd
+    ? cwd.replace(/^\/(?:Users|home)\/[^/]+\//, "").split("/").filter(Boolean)
+    : p.name.replace(/^-(?:Users|home)-[^-]+-/, "").replace(/-/g, "/").split("/").filter(Boolean);
   const leaf = parts[parts.length - 1] || p.name;
   const group = parts.slice(Math.max(0, parts.length - 3), parts.length - 1).join("/");
   return { id: p.name, group: group ? group + "/" : "", leaf, sessionCount: p.sessionCount };

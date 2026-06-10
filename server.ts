@@ -46,6 +46,38 @@ app.get("/api/image", (req, res) => {
   }
 });
 
+// Read the real working directory recorded in a session file. Claude Code's
+// project-dir name encodes the path by replacing every "/" with "-", which is
+// ambiguous for directories that legitimately contain dashes (e.g.
+// "2026-05-subtensor" vs "2026/05/subtensor"). The `cwd` field on the records
+// is the unambiguous source of truth. We only read a bounded prefix because
+// cwd appears on the very first record, keeping the projects list cheap.
+const CWD_SCAN_BYTES = 65536;
+function readProjectCwd(projectPath: string, jsonlFiles: string[]): string {
+  for (const f of jsonlFiles) {
+    let fd: number | null = null;
+    try {
+      fd = fs.openSync(path.join(projectPath, f), "r");
+      const buf = Buffer.alloc(CWD_SCAN_BYTES);
+      const bytes = fs.readSync(fd, buf, 0, buf.length, 0);
+      for (const line of buf.toString("utf-8", 0, bytes).split("\n")) {
+        if (!line) continue;
+        try {
+          const obj = JSON.parse(line);
+          if (typeof obj.cwd === "string" && obj.cwd) return obj.cwd;
+        } catch {
+          // truncated trailing line in the bounded read — ignore and move on
+        }
+      }
+    } catch {
+      // unreadable file — try the next one
+    } finally {
+      if (fd !== null) try { fs.closeSync(fd); } catch {}
+    }
+  }
+  return "";
+}
+
 app.get("/api/projects", (_req, res) => {
   try {
     const projects = fs.readdirSync(PROJECTS_DIR)
@@ -53,17 +85,18 @@ app.get("/api/projects", (_req, res) => {
       .map((d) => {
         const projectPath = path.join(PROJECTS_DIR, d);
         let latestMtime = 0;
-        let sessionCount = 0;
+        const jsonlFiles: string[] = [];
         try {
           for (const f of fs.readdirSync(projectPath)) {
             if (f.endsWith(".jsonl")) {
-              sessionCount++;
+              jsonlFiles.push(f);
               const mt = fs.statSync(path.join(projectPath, f)).mtimeMs;
               if (mt > latestMtime) latestMtime = mt;
             }
           }
         } catch {}
-        return { name: d, sessionCount, mtime: latestMtime };
+        const cwd = readProjectCwd(projectPath, jsonlFiles);
+        return { name: d, sessionCount: jsonlFiles.length, mtime: latestMtime, cwd };
       })
       .sort((a, b) => b.mtime - a.mtime);
     res.json(projects);

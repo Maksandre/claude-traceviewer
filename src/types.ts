@@ -12,6 +12,10 @@ export interface ProjectMeta {
   name: string;
   sessionCount: number;
   mtime: number;
+  /** Real working directory from the session records. Used for display because
+   * the encoded `name` replaces every "/" with "-" and is ambiguous for
+   * directory names that legitimately contain dashes. */
+  cwd?: string;
 }
 
 export interface ContentBlock {
