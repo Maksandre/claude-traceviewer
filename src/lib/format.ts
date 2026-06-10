@@ -92,6 +92,20 @@ export function toolColor(name?: string | null): string {
     agent: "var(--tool-agent)", web: "var(--tool-web)", mcp: "var(--accent)", other: "var(--tx-2)" } as const)[c];
 }
 
+/** Split an MCP tool id ("mcp__<server>__<tool>") into display parts, or null
+ * for regular tools. The server segment is prettified for display: the
+ * "claude_ai_" prefix that claude.ai-hosted connectors add is noise, and
+ * underscores read better as spaces ("claude_ai_Google_Drive" → "Google Drive"). */
+export function mcpToolName(name?: string | null): { server: string; tool: string } | null {
+  if (!name || !name.startsWith("mcp__")) return null;
+  const rest = name.slice(5);
+  const sep = rest.indexOf("__");
+  if (sep <= 0 || sep + 2 >= rest.length) return null;
+  const raw = rest.slice(0, sep);
+  const server = raw.replace(/^claude_ai_/, "").replace(/_+/g, " ").trim();
+  return { server: server || raw, tool: rest.slice(sep + 2) };
+}
+
 export interface AgentMeta { hue: number; }
 export function agentMeta(type: string = ""): AgentMeta {
   const t = type.toLowerCase();

@@ -2,6 +2,7 @@ import { useMemo, useState } from "react";
 import { agentColor, agentMeta, fmtClock, fmtCost, fmtDur, fmtTokens, modelColor, modelLabel, toolColor } from "../lib/format";
 import { Icons, toolIcon } from "../lib/icons";
 import { Bar } from "../lib/md";
+import { ToolName } from "./ToolName";
 import type { NormTrace } from "../lib/normalize";
 
 interface Props { trace: NormTrace; onOpenAgent: (id: string) => void; }
@@ -310,7 +311,7 @@ function ToolFreq({ freq, usage, projectDir }: {
                   </span>
                 ) : <span className="tf-caret tf-caret-placeholder" />}
                 <span className="tf-ic" style={{ color: col }}><TI size={13} /></span>
-                {name}
+                <ToolName name={name} />
               </span>
               <span><Bar pct={count / max} color={col} h={8} /></span>
               <span className="tf-count tnum">{count}</span>

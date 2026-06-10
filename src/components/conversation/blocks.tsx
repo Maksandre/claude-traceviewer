@@ -6,6 +6,7 @@ import { Caret, ClampBlock, CodeBlock, Markdown, MoreButton } from "../../lib/md
 import type { NormAgent, NormBlock, NormMsg, NormToolResult } from "../../lib/normalize";
 import { toolColor } from "../../lib/format";
 import { usePermalinks } from "../../lib/permalinkCtx";
+import { ToolName } from "../ToolName";
 
 // Shared copy-link primitive. Falls back from the Clipboard API to a
 // hidden textarea + execCommand when the page isn't served over a
@@ -206,7 +207,7 @@ export function ToolCard({ block, result, defaultOpen }: { block: NormBlock; res
         <span className="blk-ic tool-ic" style={{ color: col, background: `color-mix(in oklch, ${col} 16%, transparent)` }}>
           <TI size={13} />
         </span>
-        <span className="tool-name">{block.name}</span>
+        <span className="tool-name"><ToolName name={block.name} /></span>
         {summary ? <span className="tool-summary">{summary}</span> : null}
         <span className="tool-status">
           {hasResult ? (

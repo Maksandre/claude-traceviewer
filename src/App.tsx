@@ -134,7 +134,7 @@ function App() {
     return data.map((it: any) =>
       typeof it === "string"
         ? { name: it, sessionCount: 0, mtime: 0 }
-        : { name: String(it?.name || ""), sessionCount: Number(it?.sessionCount || 0), mtime: Number(it?.mtime || 0) }
+        : { name: String(it?.name || ""), sessionCount: Number(it?.sessionCount || 0), mtime: Number(it?.mtime || 0), cwd: typeof it?.cwd === "string" ? it.cwd : undefined }
     ).filter((p) => p.name);
   };
 
