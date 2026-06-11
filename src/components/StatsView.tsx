@@ -7,7 +7,7 @@ import type { NormTrace } from "../lib/normalize";
 import { analyzeCache } from "../lib/cacheInsights";
 import type { CacheInsights, CacheRebuild } from "../lib/cacheInsights";
 
-interface Props { trace: NormTrace; onOpenAgent: (id: string) => void; }
+interface Props { trace: NormTrace; onOpenAgent: (id: string) => void; onOpenMessage: (uuid: string) => void; }
 
 /* Extract a meaningful identity key from a tool_use input — the "what was this
    call against?" string we group by. file_path for file tools, command for
@@ -498,7 +498,8 @@ function AgentGantt({ trace, onOpen }: { trace: NormTrace; onOpen: (id: string) 
   );
 }
 
-export function StatsView({ trace, onOpenAgent }: Props) {
+export function StatsView({ trace, onOpenAgent, onOpenMessage }: Props) {
+  void onOpenMessage; // temporary: consumed in Task 6
   const s = trace.stats;
   const sess = trace.session;
   const totTok = useMemo(() => s.totals.input + s.totals.output + s.totals.cw + s.totals.cr, [s.totals]);

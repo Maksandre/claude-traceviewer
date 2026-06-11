@@ -64,6 +64,10 @@ function App() {
     setTargetMsg(msg);
     setTargetBlock(block);
   }, []);
+  const openMessage = useCallback((uuid: string) => {
+    selectTarget(uuid, null);
+    setView("conversation");
+  }, [selectTarget]);
   const permalinkApi = useMemo(() => ({ selectTarget }), [selectTarget]);
   const [query, setQuery] = useState("");
   // Search runs when the user presses Enter in the Toolbar. We wrap the
@@ -347,7 +351,7 @@ function App() {
               clearFocus={() => setFocusAgentId(null)}
             />
           ) : (
-            <div className="stats-scroll"><StatsView trace={trace} onOpenAgent={setDrawerId} /></div>
+            <div className="stats-scroll"><StatsView trace={trace} onOpenAgent={setDrawerId} onOpenMessage={openMessage} /></div>
           )}
         </div>
       </main>
