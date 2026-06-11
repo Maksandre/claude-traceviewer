@@ -6,6 +6,7 @@ import { ToolName } from "./ToolName";
 import type { NormTrace } from "../lib/normalize";
 import { analyzeCache } from "../lib/cacheInsights";
 import type { CacheInsights, CacheRebuild } from "../lib/cacheInsights";
+import { analyzeFriction } from "../lib/frictionInsights";
 
 interface Props { trace: NormTrace; onOpenAgent: (id: string) => void; onOpenMessage: (uuid: string) => void; }
 
@@ -237,30 +238,46 @@ function Panel({ title, sub, children, span }: { title: string; sub?: string; ch
   );
 }
 
-function ModelMix({ mix }: { mix: Record<string, number> }) {
-  const entries = Object.entries(mix).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-  const total = entries.reduce((a, [, v]) => a + v, 0) || 1;
-  if (entries.length === 0) return <div className="empty">no model data</div>;
+function CostModels({ trace }: { trace: NormTrace }) {
+  const rows = trace.stats.modelStats;
+  const totalCost = rows.reduce((a, r) => a + r.cost, 0) || 1;
+  if (rows.length === 0) return <div className="empty">no model data</div>;
   return (
-    <div>
-      <div className="stackbar">
-        {entries.map(([fam, v]) => (
-          <div key={fam} className="stackseg"
-            style={{ width: (v / total * 100) + "%", background: `var(--${fam})` }}
-            title={`${fam} ${(v / total * 100).toFixed(1)}%`}
-          />
-        ))}
+    <div className="costmodels">
+      {rows.map(r => (
+        <div key={r.family} className="cm-row">
+          <span className="cm-dot" style={{ background: `var(--${r.family})` }} />
+          <span className="cm-name">{r.family[0].toUpperCase() + r.family.slice(1)}</span>
+          <span className="cm-bar"><span className="cm-bar-fill" style={{ width: (r.cost / totalCost * 100) + "%", background: `var(--${r.family})` }} /></span>
+          <span className="cm-tok tnum">{fmtTokens(r.tokens)}</span>
+          <span className="cm-cost tnum">{fmtCost(r.cost)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FrictionPanel({ trace, onOpenMessage }: { trace: NormTrace; onOpenMessage: (uuid: string) => void }) {
+  const fr = useMemo(() => analyzeFriction(trace), [trace]);
+  if (fr.errorTotal === 0 && fr.interruptions === 0) {
+    return <div className="cachep-empty">clean run — no errors or interruptions</div>;
+  }
+  return (
+    <div className="friction">
+      <div className="friction-summary">
+        <span className="friction-stat"><b className="tnum warn">{fr.errorTotal}</b> tool error{fr.errorTotal === 1 ? "" : "s"}</span>
+        <span className="friction-stat"><b className="tnum">{fr.interruptions}</b> interruption{fr.interruptions === 1 ? "" : "s"}</span>
       </div>
-      <div className="legend">
-        {entries.map(([fam, v]) => (
-          <div key={fam} className="legend-item">
-            <span className="legend-dot" style={{ background: `var(--${fam})` }} />
-            <span className="legend-name">{fam[0].toUpperCase() + fam.slice(1)}</span>
-            <span className="legend-val tnum">{(v / total * 100).toFixed(1)}%</span>
-            <span className="legend-sub tnum">{fmtTokens(v)} tok</span>
-          </div>
-        ))}
-      </div>
+      {fr.toolErrors.map(g => (
+        <div key={g.tool} className="friction-group">
+          <div className="friction-tool">{g.tool} <span className="friction-count tnum">×{g.count}</span></div>
+          {g.samples.map((s, i) => (
+            <button key={i} type="button" className="friction-sample" onClick={() => s.msgUuid && onOpenMessage(s.msgUuid)} disabled={!s.msgUuid}>
+              {s.snippet || "(no message)"}
+            </button>
+          ))}
+        </div>
+      ))}
     </div>
   );
 }
@@ -543,8 +560,12 @@ export function StatsView({ trace, onOpenAgent, onOpenMessage }: Props) {
           <CachePanel trace={trace} onOpenMessage={onOpenMessage} />
         </Panel>
 
-        <Panel title="Model mix" sub="by token volume">
-          <ModelMix mix={s.modelMix} />
+        <Panel title="Cost & models" sub="by spend">
+          <CostModels trace={trace} />
+        </Panel>
+
+        <Panel title="Friction" sub="errors & interruptions">
+          <FrictionPanel trace={trace} onOpenMessage={onOpenMessage} />
         </Panel>
 
         <Panel title="Tool usage frequency" span={2} sub="click a tool for file/command breakdown">
