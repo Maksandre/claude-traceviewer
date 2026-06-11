@@ -61,7 +61,11 @@ function analyzeStream(msgs: NormMsg[], agent: string, ins: CacheInsights): void
         rebuild = true;
         const prevCtx = prev.usage.input + prev.usage.cw + prev.usage.cr;
         const rebuiltTokens = Math.min(cw, prevCtx);
-        const gapMs = Math.max(0, new Date(m.ts).getTime() - new Date(prev.ts).getTime());
+        const tCurr = new Date(m.ts).getTime();
+        const tPrev = new Date(prev.ts).getTime();
+        const gapMs = Number.isNaN(tCurr) || Number.isNaN(tPrev) ? 0 : Math.max(0, tCurr - tPrev);
+        // Precedence is intentional: a >TTL gap expires the cache regardless of
+        // what else changed, so idle wins even when the model also switched.
         const cause: RebuildCause =
           gapMs > TTL_MS ? "idle"
           : prev.model && m.model && prev.model !== m.model ? "model-switch"

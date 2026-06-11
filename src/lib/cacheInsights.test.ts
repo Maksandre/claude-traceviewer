@@ -97,10 +97,20 @@ describe("analyzeCache", () => {
     expect(ins.events[0].agent).toBe("bug-finder");
   });
 
+  it("idle gap AND model switch → classified idle (precedence documented)", () => {
+    const ins = analyzeCache(trace([
+      msg({ atSec: 0, input: 5000, cw: 100000, cr: 0, model: "claude-sonnet-4-6" }),
+      msg({ atSec: 600, input: 200, cw: 105000, cr: 0, model: "claude-opus-4-6" }),
+    ]));
+    expect(ins.events).toHaveLength(1);
+    expect(ins.events[0].cause).toBe("idle");
+  });
+
   it("user messages and zero-usage entries are skipped", () => {
     const ins = analyzeCache(trace([
       msg({ atSec: 0, role: "user", output: 0 }),
-      msg({ atSec: 1, input: 5000, cw: 20000, cr: 0 }),
+      msg({ atSec: 1, input: 0, cw: 0, cr: 0, output: 0 }),   // zero-usage assistant entry
+      msg({ atSec: 2, input: 5000, cw: 20000, cr: 0 }),
     ]));
     expect(ins.series).toHaveLength(1);
   });
