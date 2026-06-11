@@ -112,8 +112,22 @@ function adviceFor(ins: CacheInsights): string | null {
 
 const IDLE_GAP_MS = 5 * 60_000;
 
+const MAX_TIMELINE_PTS = 400;
+
+function downsampleSeries(series: CacheInsights["series"]): CacheInsights["series"] {
+  if (series.length <= MAX_TIMELINE_PTS) return series;
+  // Keep every rebuild point (red dots must survive) plus an evenly-spaced
+  // sample of the rest, preserving chronological order.
+  const stride = Math.ceil(series.length / MAX_TIMELINE_PTS);
+  const out: CacheInsights["series"] = [];
+  for (let i = 0; i < series.length; i++) {
+    if (series[i].rebuild || i % stride === 0 || i === series.length - 1) out.push(series[i]);
+  }
+  return out;
+}
+
 function ContextTimeline({ ins, onOpenMessage }: { ins: CacheInsights; onOpenMessage: (uuid: string) => void }) {
-  const pts = ins.series;
+  const pts = downsampleSeries(ins.series);
   if (pts.length < 2) return <div className="cachep-empty">not enough calls to chart</div>;
   // Build an x position per point: real elapsed time, but any gap over the idle
   // threshold is clamped to a fixed slot so one long pause doesn't flatten the rest.
@@ -136,7 +150,7 @@ function ContextTimeline({ ins, onOpenMessage }: { ins: CacheInsights; onOpenMes
   const area = `0,${H} ${line} ${px(xs[xs.length - 1]).toFixed(2)},${H}`;
   return (
     <div className="ctl">
-      <svg className="ctl-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`Context size across ${pts.length} calls`}>
+      <svg className="ctl-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`Context size across ${ins.series.length} calls`}>
         <polygon className="ctl-area" points={area} />
         <polyline className="ctl-line" points={line} />
         {breaks.map((b, i) => <line key={"b" + i} className="ctl-break" x1={px(b.x)} x2={px(b.x)} y1={0} y2={H} />)}
