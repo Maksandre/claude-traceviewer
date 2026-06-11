@@ -22,13 +22,13 @@ function trace(mainMsgs: NormMsg[], agents: { agentType: string; messages: NormM
   const u = { input: 0, output: 0, cw: 0, cr: 0, cost: 0 };
   return {
     session: { project: "", attributionSkill: "", gitBranch: "", models: [], durationMs: 0, startedAt: "", endedAt: "" },
-    main: { messages: mainMsgs, toolResults: {}, toolCounts: {}, usage: u },
+    main: { messages: mainMsgs, toolResults: {}, toolCounts: {}, toolUseMsgUuid: {}, usage: u },
     agents: agents.map((a, i) => ({
       id: "a" + i, toolUseId: "t" + i, agentType: a.agentType, description: "", model: "",
       prompt: "", startedAt: "", endedAt: "", durationMs: 0, msgCount: a.messages.length,
-      messages: a.messages, toolResults: {}, toolCounts: {}, usage: u, result: "", persona: null,
+      messages: a.messages, toolResults: {}, toolCounts: {}, toolUseMsgUuid: {}, usage: u, result: "", persona: null,
     })),
-    stats: { totals: u, modelMix: { fable: 0, opus: 0, sonnet: 0, haiku: 0 }, toolFreq: {}, cacheRatio: 0.97 },
+    stats: { totals: u, modelMix: { fable: 0, opus: 0, sonnet: 0, haiku: 0 }, toolFreq: {}, cacheRatio: 0.97, modelStats: [] },
   } as NormTrace;
 }
 

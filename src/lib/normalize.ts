@@ -43,6 +43,7 @@ export interface NormAgent {
   messages: NormMsg[];
   toolResults: Record<string, NormToolResult>;
   toolCounts: Record<string, number>;
+  toolUseMsgUuid: Record<string, string>;
   usage: { input: number; output: number; cw: number; cr: number; cost: number };
   result: string;
   persona: { content: string; resolvedPath: string } | null;
@@ -63,6 +64,7 @@ export interface NormStats {
   modelMix: Record<ModelFamily, number>;
   toolFreq: Record<string, number>;
   cacheRatio: number;
+  modelStats: { family: ModelFamily; tokens: number; cost: number }[];
 }
 
 export interface NormTrace {
@@ -71,6 +73,7 @@ export interface NormTrace {
     messages: NormMsg[];
     toolResults: Record<string, NormToolResult>;
     toolCounts: Record<string, number>;
+    toolUseMsgUuid: Record<string, string>;
     usage: { input: number; output: number; cw: number; cr: number; cost: number };
   };
   agents: NormAgent[];
@@ -169,6 +172,7 @@ function normalizeRecords(records: TraceRecord[]): {
   messages: NormMsg[];
   toolResults: Record<string, NormToolResult>;
   toolCounts: Record<string, number>;
+  toolUseMsgUuid: Record<string, string>;
   usage: { input: number; output: number; cw: number; cr: number; cost: number };
   modelsSeen: Set<string>;
   startedAt: string;
@@ -178,6 +182,7 @@ function normalizeRecords(records: TraceRecord[]): {
   const merged = buildMergedAssistants(records);
   const toolResults: Record<string, NormToolResult> = {};
   const toolCounts: Record<string, number> = {};
+  const toolUseMsgUuid: Record<string, string> = {};
   const messages: NormMsg[] = [];
   const usage = EMPTY_USAGE();
   const modelsSeen = new Set<string>();
@@ -253,6 +258,9 @@ function normalizeRecords(records: TraceRecord[]): {
             spawnByToolUseId[block.id] = { type: inp.subagent_type || "agent", description: inp.description || "", model: inp.model };
           }
         }
+        if (block.type === "tool_use" && block.id) {
+          toolUseMsgUuid[block.id] = rec.uuid || id;
+        }
       }
 
       messages.push({
@@ -269,7 +277,7 @@ function normalizeRecords(records: TraceRecord[]): {
     }
   }
 
-  return { messages, toolResults, toolCounts, usage, modelsSeen, startedAt, endedAt, spawnByToolUseId };
+  return { messages, toolResults, toolCounts, toolUseMsgUuid, usage, modelsSeen, startedAt, endedAt, spawnByToolUseId };
 }
 
 function readMeta(meta: any): { agentType?: string; description?: string; prompt?: string; model?: string; toolUseId?: string } {
@@ -381,6 +389,7 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
         messages,
         toolResults: aNorm.toolResults,
         toolCounts: aNorm.toolCounts,
+        toolUseMsgUuid: aNorm.toolUseMsgUuid,
         usage: aNorm.usage,
         result: result || lastAssistTxt,
         persona: data?.persona || null,
@@ -406,6 +415,23 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
       modelMix[modelFamily(m.model)] += m.usage.input + m.usage.output + m.usage.cw + m.usage.cr;
     }
   }
+
+  const modelStats = (Object.keys(modelMix) as ModelFamily[])
+    .map(family => {
+      let tokens = 0, cost = 0;
+      const acc = (msgs: NormMsg[]) => {
+        for (const m of msgs) {
+          if (m.role !== "assistant" || modelFamily(m.model) !== family) continue;
+          tokens += m.usage.input + m.usage.output + m.usage.cw + m.usage.cr;
+          cost += m.usage.cost;
+        }
+      };
+      acc(mainNorm.messages);
+      for (const a of agents) acc(a.messages);
+      return { family, tokens, cost };
+    })
+    .filter(m => m.tokens > 0)
+    .sort((a, b) => b.cost - a.cost);
 
   const toolFreq: Record<string, number> = {};
   for (const [k, v] of Object.entries(mainNorm.toolCounts)) toolFreq[k] = (toolFreq[k] || 0) + v;
@@ -437,9 +463,10 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
       messages: mainNorm.messages,
       toolResults: mainNorm.toolResults,
       toolCounts: mainNorm.toolCounts,
+      toolUseMsgUuid: mainNorm.toolUseMsgUuid,
       usage: mainNorm.usage,
     },
     agents,
-    stats: { totals: allTotals, modelMix, toolFreq, cacheRatio },
+    stats: { totals: allTotals, modelMix, toolFreq, cacheRatio, modelStats },
   };
 }
