@@ -813,6 +813,22 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .friction-sample:hover:not(:disabled) { background: var(--bg-3); color: var(--tx-0); }
 .friction-sample:disabled { cursor: default; opacity: .7; }
 
+.timespent { display: flex; flex-direction: column; gap: 10px; }
+.ts-bar { display: flex; height: 22px; border-radius: var(--r-sm); overflow: hidden; background: var(--bg-3); }
+.ts-seg { height: 100%; }
+.ts-seg.ts-work { background: var(--tool-agent); }
+.ts-seg.ts-wait { background: var(--bg-3); box-shadow: inset 0 0 0 1px var(--line-soft); }
+.ts-legend { display: flex; gap: 20px; font-size: 12px; color: var(--tx-2); }
+.ts-legend b { color: var(--tx-0); margin-left: 5px; }
+.ts-dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+.ts-dot.ts-work { background: var(--tool-agent); }
+.ts-dot.ts-wait { background: var(--bg-3); box-shadow: inset 0 0 0 1px var(--line-soft); }
+.ts-stalls { display: flex; flex-direction: column; gap: 3px; }
+.ts-stall { display: flex; gap: 12px; align-items: baseline; border: none; background: var(--bg-2); border-radius: var(--r-sm); padding: 6px 10px; cursor: pointer; text-align: left; font: inherit; width: 100%; }
+.ts-stall:hover { background: var(--bg-3); }
+.ts-stall-dur { font-family: var(--ff-mono); font-weight: 600; color: var(--warn); min-width: 70px; }
+.ts-stall-lbl { font-size: 12px; color: var(--tx-2); }
+
 .toolfreq-total { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-3); margin-bottom: 14px; }
 .tf-group { border-radius: var(--r-sm); }
 .tf-group.open { background: var(--bg-2); }

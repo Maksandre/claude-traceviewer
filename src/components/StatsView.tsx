@@ -7,6 +7,7 @@ import type { NormTrace } from "../lib/normalize";
 import { analyzeCache } from "../lib/cacheInsights";
 import type { CacheInsights, CacheRebuild } from "../lib/cacheInsights";
 import { analyzeFriction } from "../lib/frictionInsights";
+import { analyzeTime } from "../lib/timeInsights";
 
 interface Props { trace: NormTrace; onOpenAgent: (id: string) => void; onOpenMessage: (uuid: string) => void; }
 
@@ -278,6 +279,35 @@ function FrictionPanel({ trace, onOpenMessage }: { trace: NormTrace; onOpenMessa
           ))}
         </div>
       ))}
+    </div>
+  );
+}
+
+function TimeSpentPanel({ trace, onOpenMessage }: { trace: NormTrace; onOpenMessage: (uuid: string) => void }) {
+  const ti = useMemo(() => analyzeTime(trace), [trace]);
+  const total = ti.workingMs + ti.waitingMs || 1;
+  const workPct = (ti.workingMs / total) * 100;
+  return (
+    <div className="timespent">
+      <div className="ts-bar">
+        <span className="ts-seg ts-work" style={{ width: workPct + "%" }} title={`working ${fmtDur(ti.workingMs)}`} />
+        <span className="ts-seg ts-wait" style={{ width: (100 - workPct) + "%" }} title={`waiting ${fmtDur(ti.waitingMs)}`} />
+      </div>
+      <div className="ts-legend">
+        <span><span className="ts-dot ts-work" /> agent working <b className="tnum">{fmtDur(ti.workingMs)}</b></span>
+        <span><span className="ts-dot ts-wait" /> waiting on you <b className="tnum">{fmtDur(ti.waitingMs)}</b></span>
+      </div>
+      <div className="cachep-caption">"waiting on you" is the time between Claude finishing a turn and your next message — idle time, not work.</div>
+      {ti.stalls.length ? (
+        <div className="ts-stalls">
+          {ti.stalls.map((s, i) => (
+            <button key={i} type="button" className="ts-stall" onClick={() => onOpenMessage(s.msgUuid)}>
+              <span className="ts-stall-dur tnum">{fmtDur(s.ms)}</span>
+              <span className="ts-stall-lbl">paused after this turn → jump</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -566,6 +596,10 @@ export function StatsView({ trace, onOpenAgent, onOpenMessage }: Props) {
 
         <Panel title="Friction" sub="errors & interruptions">
           <FrictionPanel trace={trace} onOpenMessage={onOpenMessage} />
+        </Panel>
+
+        <Panel title="Where the time went" span={2} sub="working vs waiting · click a stall to jump">
+          <TimeSpentPanel trace={trace} onOpenMessage={onOpenMessage} />
         </Panel>
 
         <Panel title="Tool usage frequency" span={2} sub="click a tool for file/command breakdown">
