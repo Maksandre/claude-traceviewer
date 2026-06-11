@@ -761,14 +761,31 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .panel-sub { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-3); }
 .panel-body { padding: 16px 18px 18px; }
 
-.cache-row { display: flex; gap: 20px; align-items: center; }
-.donut-pct { font-family: var(--ff-mono); font-size: 18px; font-weight: 600; fill: var(--tx-0); }
-.donut-lbl { font-family: var(--ff-mono); font-size: 8px; fill: var(--tx-3); text-transform: uppercase; letter-spacing: .1em; }
-.cache-legend { flex: 1; display: flex; flex-direction: column; gap: 9px; }
-.cl-item { display: flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--tx-1); }
-.cl-dot { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
-.cl-item b { margin-left: auto; color: var(--tx-0); font-family: var(--ff-mono); }
-.cl-note { font-family: var(--ff-mono); font-size: 10.5px; color: var(--tx-3); line-height: 1.5; margin-top: 4px; }
+/* Prompt caching panel: savings/waste chips, per-call context bars, rebuild events */
+.cachep { display: flex; flex-direction: column; gap: 12px; }
+.cachep-chips { display: flex; gap: 10px; flex-wrap: wrap; }
+.cachep-chip { flex: 1; min-width: 110px; background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 9px 12px; display: flex; flex-direction: column; gap: 3px; }
+.cachep-k { font-family: var(--ff-mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--tx-3); }
+.cachep-v { font-family: var(--ff-mono); font-size: 17px; font-weight: 600; color: var(--tx-0); }
+.cachep-v.ok { color: var(--ok, #4a9); }
+.cachep-v.warn { color: var(--warn); }
+.cachep-causes { font-family: var(--ff-mono); font-size: 10px; color: var(--tx-3); }
+.cachep-chart { display: flex; align-items: flex-end; gap: 1px; height: 56px; background: var(--bg-2); border-radius: var(--r-sm); padding: 4px 4px 0; overflow: hidden; }
+.cachep-bar { flex: 1; min-width: 1px; max-width: 14px; position: relative; background: color-mix(in oklch, var(--sonnet) 55%, transparent); border-radius: 1px 1px 0 0; }
+.cachep-bar-w { position: absolute; top: 0; left: 0; right: 0; background: var(--warn); border-radius: 1px 1px 0 0; opacity: .45; }
+.cachep-bar.is-rebuild { background: color-mix(in oklch, var(--err, #d66) 35%, transparent); }
+.cachep-bar.is-rebuild .cachep-bar-w { background: var(--err, #d66); opacity: .9; }
+.cachep-caption { font-family: var(--ff-mono); font-size: 10px; color: var(--tx-3); }
+.cachep-events { display: flex; flex-direction: column; gap: 2px; max-height: 180px; overflow-y: auto; }
+.cachep-event { display: grid; grid-template-columns: 52px 1fr auto auto; gap: 10px; align-items: baseline; font-size: 12px; padding: 4px 6px; border-radius: var(--r-sm); }
+.cachep-event:nth-child(odd) { background: var(--bg-2); }
+.cachep-ev-time { font-family: var(--ff-mono); font-size: 10.5px; color: var(--tx-3); }
+.cachep-ev-cause { color: var(--tx-1); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cachep-ev-agent { font-family: var(--ff-mono); font-size: 10px; color: var(--tx-2); background: var(--bg-3); border-radius: 4px; padding: 1px 5px; margin-right: 6px; }
+.cachep-ev-tok { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-2); }
+.cachep-ev-cost { font-family: var(--ff-mono); font-size: 11.5px; font-weight: 600; color: var(--warn); }
+.cachep-empty { font-family: var(--ff-mono); font-size: 11.5px; color: var(--tx-3); padding: 4px 0; }
+.cachep-advice { font-size: 12px; line-height: 1.5; color: var(--tx-2); background: var(--bg-2); border-left: 3px solid var(--accent); border-radius: var(--r-sm); padding: 8px 12px; }
 
 .stackbar { display: flex; height: 30px; border-radius: 7px; overflow: hidden; gap: 2px; margin-bottom: 16px; background: var(--bg-2); }
 .stackseg { height: 100%; transition: width .6s ease; min-width: 3px; }
@@ -980,8 +997,6 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
   .stats-grid { gap: 10px; }
   .panel-head { flex-wrap: wrap; column-gap: 10px; row-gap: 2px; }
   .panel-body { padding: 13px 13px 14px; }
-  .cache-row { flex-direction: column; gap: 14px; }
-  .cache-row .donut { align-self: center; }
   .tf-row { grid-template-columns: minmax(0, 45%) 1fr 34px; gap: 8px; }
 
   /* conversation */

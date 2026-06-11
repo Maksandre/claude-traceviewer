@@ -1,9 +1,11 @@
 import { useMemo, useState } from "react";
-import { agentColor, fmtClock, fmtCost, fmtDur, fmtDurShort, fmtTokens, fmtTokensShort, modelColor, modelLabel, toolColor } from "../lib/format";
+import { agentColor, fmtClock, fmtCost, fmtDur, fmtDurShort, fmtTime, fmtTokens, fmtTokensShort, modelColor, modelLabel, toolColor } from "../lib/format";
 import { Icons, toolIcon } from "../lib/icons";
 import { Bar } from "../lib/md";
 import { ToolName } from "./ToolName";
 import type { NormTrace } from "../lib/normalize";
+import { analyzeCache } from "../lib/cacheInsights";
+import type { CacheInsights, CacheRebuild } from "../lib/cacheInsights";
 
 interface Props { trace: NormTrace; onOpenAgent: (id: string) => void; }
 
@@ -89,21 +91,93 @@ function BigStat({ icon: Ic, label, value, sub, color, accent }: {
   );
 }
 
-function Donut({ pct, color, label, center }: { pct: number; color: string; label: string; center: string }) {
-  const r = 42;
-  const c = 2 * Math.PI * r;
+function causeLabel(e: CacheRebuild): string {
+  if (e.cause === "idle") return `idle ${fmtDur(e.gapMs)} → cache expired (5-min TTL)`;
+  if (e.cause === "model-switch") return `model switch ${modelLabel(e.fromModel)} → ${modelLabel(e.toModel)}`;
+  return "prefix changed (system prompt/tools)";
+}
+
+function adviceFor(ins: CacheInsights): string | null {
+  const n = ins.events.length;
+  if (!n) return null;
+  const { idle, "model-switch": ms, "prefix-change": px } = ins.causeCounts;
+  if (idle >= ms && idle >= px) {
+    return `${idle} of ${n} rebuilds were idle gaps over 5 min — the cache lives 5 minutes; replying within that window (or batching prompts up front) avoids the 1.25× re-write.`;
+  }
+  if (ms >= px) {
+    return `${ms} of ${n} rebuilds came from model switches — caches are per-model, so keeping one model per session avoids full re-writes.`;
+  }
+  return `${px} of ${n} rebuilds came from prefix changes — the system prompt or tool set changed mid-session; keeping them stable preserves the cache.`;
+}
+
+function CachePanel({ trace }: { trace: NormTrace }) {
+  const ins = useMemo(() => analyzeCache(trace), [trace]);
+  const maxCtx = Math.max(...ins.series.map(p => p.read + p.written + p.fresh), 1);
+  const advice = adviceFor(ins);
   return (
-    <div className="donut">
-      <svg viewBox="0 0 100 100" width="118" height="118">
-        <circle cx="50" cy="50" r={r} fill="none" stroke="var(--bg-3)" strokeWidth="11" />
-        <circle
-          cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth="11" strokeLinecap="round"
-          strokeDasharray={c} strokeDashoffset={c * (1 - pct)} transform="rotate(-90 50 50)"
-          style={{ transition: "stroke-dashoffset .8s cubic-bezier(.2,.8,.2,1)" }}
-        />
-        <text x="50" y="47" textAnchor="middle" className="donut-pct">{center}</text>
-        <text x="50" y="62" textAnchor="middle" className="donut-lbl">{label}</text>
-      </svg>
+    <div className="cachep">
+      <div className="cachep-chips">
+        <div className="cachep-chip">
+          <span className="cachep-k">saved by cache</span>
+          <b className="cachep-v ok tnum">{fmtCost(ins.savedUsd)}</b>
+        </div>
+        <div className="cachep-chip">
+          <span className="cachep-k">lost to rebuilds</span>
+          <b className={"cachep-v tnum " + (ins.wastedUsd >= 0.01 ? "warn" : "")}>{fmtCost(ins.wastedUsd)}</b>
+        </div>
+        <div className="cachep-chip">
+          <span className="cachep-k">rebuilds</span>
+          <b className="cachep-v tnum">{ins.events.length}</b>
+          {ins.events.length ? (
+            <span className="cachep-causes">
+              {[
+                ins.causeCounts.idle ? `${ins.causeCounts.idle} idle` : "",
+                ins.causeCounts["model-switch"] ? `${ins.causeCounts["model-switch"]} model` : "",
+                ins.causeCounts["prefix-change"] ? `${ins.causeCounts["prefix-change"]} prefix` : "",
+              ].filter(Boolean).join(" · ")}
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      <div className="cachep-chart">
+        {ins.series.map((p, i) => {
+          const ctx = p.read + p.written + p.fresh;
+          const h = Math.max((ctx / maxCtx) * 100, 2);
+          const wh = ctx ? (p.written / ctx) * h : 0;
+          return (
+            <span
+              key={i}
+              className={"cachep-bar" + (p.rebuild ? " is-rebuild" : "")}
+              style={{ height: h + "%" }}
+              title={`${p.agent} · ${fmtTokensShort(p.read)} read · ${fmtTokensShort(p.written)} written${p.rebuild ? " · CACHE REBUILT" : ""}`}
+            >
+              <span className="cachep-bar-w" style={{ height: wh ? Math.max((wh / h) * 100, p.rebuild ? 60 : 4) + "%" : "0%" }} />
+            </span>
+          );
+        })}
+      </div>
+      <div className="cachep-caption">context per call — red = cache broke, re-written at 1.25× price</div>
+
+      {ins.events.length ? (
+        <div className="cachep-events">
+          {ins.events.map((e, i) => (
+            <div key={i} className="cachep-event">
+              <span className="cachep-ev-time tnum">{fmtTime(e.ts)}</span>
+              <span className="cachep-ev-cause">
+                {e.agent !== "main" ? <span className="cachep-ev-agent">{e.agent}</span> : null}
+                {causeLabel(e)}
+              </span>
+              <span className="cachep-ev-tok tnum">{fmtTokensShort(e.rebuiltTokens)} re-written</span>
+              <span className="cachep-ev-cost tnum">+{fmtCost(e.wastedUsd)}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="cachep-empty">no avoidable cache waste in this session</div>
+      )}
+
+      {advice ? <div className="cachep-advice">{advice}</div> : null}
     </div>
   );
 }
@@ -422,16 +496,8 @@ export function StatsView({ trace, onOpenAgent }: Props) {
       </div>
 
       <div className="stats-grid">
-        <Panel title="Cache efficiency" sub="reads vs fresh input">
-          <div className="cache-row">
-            <Donut pct={s.cacheRatio} color="var(--sonnet)" center={(s.cacheRatio * 100).toFixed(0) + "%"} label="cached" />
-            <div className="cache-legend">
-              <div className="cl-item"><span className="cl-dot" style={{ background: "var(--sonnet)" }} /><span>Cache read</span><b className="tnum">{fmtTokens(s.totals.cr)}</b></div>
-              <div className="cl-item"><span className="cl-dot" style={{ background: "var(--warn)" }} /><span>Cache write</span><b className="tnum">{fmtTokens(s.totals.cw)}</b></div>
-              <div className="cl-item"><span className="cl-dot" style={{ background: "var(--tx-2)" }} /><span>Fresh input</span><b className="tnum">{fmtTokens(s.totals.input)}</b></div>
-              <div className="cl-note">{(s.cacheRatio * 100).toFixed(1)}% of context served from cache — major cost saver on long runs.</div>
-            </div>
-          </div>
+        <Panel title="Prompt caching" sub={`${(s.cacheRatio * 100).toFixed(1)}% of input read from cache`}>
+          <CachePanel trace={trace} />
         </Panel>
 
         <Panel title="Model mix" sub="by token volume">
