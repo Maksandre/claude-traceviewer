@@ -1,6 +1,8 @@
 services:
-  trace-viewer:
+  debrief:
     build: .
+    image: debrief
+    container_name: debrief
     ports:
       - "3099:3099"
     volumes:

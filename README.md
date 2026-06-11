@@ -1,8 +1,8 @@
-# Claude Trace Viewer
+# Debrief
 
-A local viewer for Claude Code sessions. Browses the `.jsonl` trace files Claude Code writes under `~/.claude/` and renders them as readable conversations.
+A local inspector for Claude Code sessions. Reads the `.jsonl` trace files Claude Code writes under `~/.claude/` and turns them into readable conversations plus analytics — cost, prompt-cache health, context-window headroom, where the time went, and where things went wrong.
 
-Useful when developing custom subagents and skills: the delegation tree, per-agent transcripts, prompts, tool calls, and per-agent token spend are all visible side by side.
+Useful when developing custom subagents and skills: the delegation tree, per-agent transcripts, prompts, tool calls, and per-agent spend are all visible side by side, and every insight links back to the exact message that produced it.
 
 ![Conversation view](docs/img/conversation.png)
 
@@ -18,7 +18,12 @@ Useful when developing custom subagents and skills: the delegation tree, per-age
 
 ![Stats](docs/img/stats.png)
 
-Total cost, token volume, wall-clock duration, agent count, tool calls, cache hit rate, model mix, and a per-agent cost breakdown.
+Cost, token volume, wall-clock duration, peak context vs the model's window, and a per-agent breakdown. Interactive panels surface the actionable detail:
+
+- **Prompt caching** — a context-over-time chart marking every cache rebuild, what each cost, and why (idle TTL expiry, model switch, prefix change), each clickable to the message.
+- **Cost & models** — spend per model.
+- **Where the time went** — a chronological strip of agent-working vs waiting-on-you vs idle/away time, with clickable spans.
+- **Friction** — tool errors and interruptions, grouped and linked.
 
 ## Subagent delegation
 
