@@ -160,7 +160,7 @@ function ContextTimeline({ ins, onOpenMessage, hoverUuid, onHover }: {
       {breaks.length ? (
         <div className="ctl-breakrow">
           {breaks.map((b, i) => (
-            <span key={i} className="ctl-break-mark" style={{ left: px(b.x) + "%" }} title={`idle pause · ${fmtDur(b.ms)}`}>⏸</span>
+            <span key={i} className="ctl-break-mark" style={{ left: px(b.x) + "%" }} data-tip={`idle ${fmtDur(b.ms)}`}>⏸</span>
           ))}
         </div>
       ) : null}
