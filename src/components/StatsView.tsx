@@ -104,12 +104,12 @@ function adviceFor(ins: CacheInsights): string | null {
   if (!n) return null;
   const { idle, "model-switch": ms, "prefix-change": px } = ins.causeCounts;
   if (idle >= ms && idle >= px) {
-    return `${idle} of ${n} rebuilds were idle gaps over 5 min — the cache lives 5 minutes; replying within that window (or batching prompts up front) avoids the 1.25× re-write.`;
+    return `Mostly idle gaps (${idle} of ${n}). The cache expires after 5 minutes of inactivity, so the next message re-reads the whole conversation at 1.25× price. What to do: reply within ~5 minutes, or send your prompts together in one go.`;
   }
   if (ms >= px) {
-    return `${ms} of ${n} rebuilds came from model switches — caches are per-model, so keeping one model per session avoids full re-writes.`;
+    return `Mostly model switches (${ms} of ${n}). The cache is per-model, so every switch re-reads the whole conversation from scratch. What to do: stick to one model for a session when you can.`;
   }
-  return `${px} of ${n} rebuilds came from prefix changes — the system prompt or tool set changed mid-session; keeping them stable preserves the cache.`;
+  return `Mostly prefix changes (${px} of ${n}) — usually automatic context compaction or a tool/skill loading mid-session, not something you set by hand. What to do: little, in most cases. If they happen often, the session is long enough to keep compacting — starting a fresh session for a new task stops you re-paying for the old context.`;
 }
 
 const IDLE_GAP_MS = 5 * 60_000;
@@ -157,16 +157,17 @@ function ContextTimeline({ ins, onOpenMessage }: { ins: CacheInsights; onOpenMes
         <polyline className="ctl-line" points={line} />
         {breaks.map((b, i) => <line key={"b" + i} className="ctl-break" x1={px(b.x)} x2={px(b.x)} y1={0} y2={H} />)}
         {pts.map((p, i) => p.rebuild ? (
-          <circle key={i} className="ctl-dot" cx={px(xs[i])} cy={py(ctx[i])} r={1.4}
-            onClick={() => onOpenMessage(p.msgUuid)}>
+          <g key={i} className="ctl-mark" onClick={() => onOpenMessage(p.msgUuid)}>
+            <rect className="ctl-mark-hit" x={px(xs[i]) - 1.6} y={0} width={3.2} height={H} />
+            <line className="ctl-mark-line" x1={px(xs[i])} x2={px(xs[i])} y1={0} y2={H} />
             <title>cache rebuilt here — click to open</title>
-          </circle>
+          </g>
         ) : null)}
       </svg>
       <div className="ctl-breaks">
         {breaks.map((b, i) => <span key={i} className="ctl-break-lbl">⏸ {fmtDur(b.ms)} idle</span>)}
       </div>
-      <div className="cachep-caption">Claude re-reads the whole conversation each call — this line is how big that re-read is; red dots are where the cache broke and was rebuilt (click to open).</div>
+      <div className="cachep-caption">Claude re-reads the whole conversation each call — this line is how big that re-read is; red marks are where the cache broke and was rebuilt (click to open).</div>
     </div>
   );
 }

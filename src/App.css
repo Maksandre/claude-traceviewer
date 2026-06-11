@@ -355,8 +355,8 @@ button { font-family: inherit; }
    padding area can bridge :hover and serve as the sticky container.
    - top:0/bottom:0 → covers the block's full vertical range, so mouse
      traversal anywhere alongside the block keeps the button visible.
-   - padding-top:14 → pushes the button down to roughly card-header
-     baseline (card padding is 13px), so it doesn't float above content.
+   - padding-top:4 → vertically centers the 32px button on the block's
+     40px header row, so it lines up with the header instead of floating low.
    - padding-left:12 → gives a 12px visual gap between the block's
      right edge and the button, so the button no longer looks glued. */
 .blk-permalink-slot {
@@ -365,13 +365,13 @@ button { font-family: inherit; }
   bottom: 0;
   right: -56px;
   width: 56px;
-  padding: 14px 0 0 12px;
+  padding: 4px 0 0 12px;
   pointer-events: auto;
   z-index: 2;
 }
 .blk-permalink {
   position: sticky;
-  top: 14px;
+  top: 4px;
   width: 32px; height: 32px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--line-soft); background: var(--bg-1); color: var(--tx-2);
@@ -777,8 +777,13 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .ctl-area { fill: color-mix(in oklch, var(--sonnet) 18%, transparent); }
 .ctl-line { fill: none; stroke: var(--sonnet); stroke-width: 0.6; vector-effect: non-scaling-stroke; }
 .ctl-break { stroke: var(--tx-3); stroke-width: 0.4; stroke-dasharray: 1 1; vector-effect: non-scaling-stroke; }
-.ctl-dot { fill: var(--err); cursor: pointer; }
-.ctl-dot:hover { fill: var(--warn); }
+/* Rebuild markers: a full-height red line with a wide transparent hit
+   target — immune to the SVG's preserveAspectRatio stretch and far easier
+   to click than a point. */
+.ctl-mark { cursor: pointer; }
+.ctl-mark-hit { fill: transparent; }
+.ctl-mark-line { stroke: var(--err); stroke-width: 1.3; vector-effect: non-scaling-stroke; opacity: .62; }
+.ctl-mark:hover .ctl-mark-line { opacity: 1; stroke-width: 2; }
 .ctl-breaks { display: flex; flex-wrap: wrap; gap: 8px; }
 .ctl-break-lbl { font-family: var(--ff-mono); font-size: 9.5px; color: var(--tx-3); }
 .cachep-event-btn { border: none; background: transparent; width: 100%; text-align: left; font: inherit; cursor: pointer; color: inherit; }
