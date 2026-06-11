@@ -47,8 +47,25 @@ describe("analyzeTime", () => {
     expect(ins.stalls.length).toBeLessThanOrEqual(5);
   });
 
+  it("long response gaps count as away, short ones as waiting", () => {
+    // 10s work, then a 17h overnight gap (away), then 10s work, then a 5m gap (waiting)
+    const ins = analyzeTime(trace([
+      msg({ atSec: 0, role: "user" }),
+      msg({ atSec: 10, role: "assistant" }),
+      msg({ atSec: 10 + 17 * 3600, role: "user" }),       // 17h → away
+      msg({ atSec: 20 + 17 * 3600, role: "assistant" }),
+      msg({ atSec: 20 + 17 * 3600 + 300, role: "user" }), // 5m → waiting
+    ]));
+    expect(ins.awayMs).toBe(17 * 3600 * 1000);
+    expect(ins.waitingMs).toBe(300_000);
+    expect(ins.workingMs).toBe(20_000);                   // two 10s agent spans
+  });
+
   it("empty / single-message traces yield zeros", () => {
-    expect(analyzeTime(trace([])).workingMs).toBe(0);
+    const z = analyzeTime(trace([]));
+    expect(z.workingMs).toBe(0);
+    expect(z.waitingMs).toBe(0);
+    expect(z.awayMs).toBe(0);
     expect(analyzeTime(trace([msg({ atSec: 0, role: "user" })])).stalls).toHaveLength(0);
   });
 });

@@ -307,19 +307,21 @@ function FrictionPanel({ trace, onOpenMessage }: { trace: NormTrace; onOpenMessa
 
 function TimeSpentPanel({ trace, onOpenMessage }: { trace: NormTrace; onOpenMessage: (uuid: string) => void }) {
   const ti = useMemo(() => analyzeTime(trace), [trace]);
-  const total = ti.workingMs + ti.waitingMs || 1;
-  const workPct = (ti.workingMs / total) * 100;
+  const total = ti.workingMs + ti.waitingMs + ti.awayMs || 1;
+  const pct = (ms: number) => (ms / total) * 100;
   return (
     <div className="timespent">
       <div className="ts-bar">
-        <span className="ts-seg ts-work" style={{ width: workPct + "%" }} title={`working ${fmtDur(ti.workingMs)}`} />
-        <span className="ts-seg ts-wait" style={{ width: (100 - workPct) + "%" }} title={`waiting ${fmtDur(ti.waitingMs)}`} />
+        <span className="ts-seg ts-work" style={{ width: pct(ti.workingMs) + "%" }} title={`working ${fmtDur(ti.workingMs)}`} />
+        <span className="ts-seg ts-wait" style={{ width: pct(ti.waitingMs) + "%" }} title={`waiting ${fmtDur(ti.waitingMs)}`} />
+        <span className="ts-seg ts-away" style={{ width: pct(ti.awayMs) + "%" }} title={`away ${fmtDur(ti.awayMs)}`} />
       </div>
       <div className="ts-legend">
         <span><span className="ts-dot ts-work" /> agent working <b className="tnum">{fmtDur(ti.workingMs)}</b></span>
         <span><span className="ts-dot ts-wait" /> waiting on you <b className="tnum">{fmtDur(ti.waitingMs)}</b></span>
+        {ti.awayMs > 0 ? <span><span className="ts-dot ts-away" /> idle / away <b className="tnum">{fmtDur(ti.awayMs)}</b></span> : null}
       </div>
-      <div className="cachep-caption">"waiting on you" is the time between Claude finishing a turn and your next message — idle time, not work.</div>
+      <div className="cachep-caption">"waiting on you" is short think-time between turns; "idle / away" is long dormant stretches (over 30 min — overnight or stepped out), kept separate so the session's idle time isn't blamed on slow replies.</div>
       {ti.stalls.length ? (
         <div className="ts-stalls">
           {ti.stalls.map((s, i) => (
