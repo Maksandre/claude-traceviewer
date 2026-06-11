@@ -752,7 +752,8 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .bigstat-sub { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-3); margin-top: 6px; }
 
 .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
-@media (max-width: 820px) { .stats-grid { grid-template-columns: 1fr; } .panel.span-2 { grid-column: span 1; } }
+/* single-column override lives in the MOBILE section at the end of the file —
+   it must come after .panel.span-2 in source order to win */
 .panel { background: var(--bg-1); border: 1px solid var(--line-soft); border-radius: var(--r-lg); overflow: hidden; }
 .panel.span-2 { grid-column: span 2; }
 .panel-head { display: flex; justify-content: space-between; align-items: baseline; padding: 15px 18px 0; }
@@ -826,6 +827,12 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 @container (max-width: 900px) {
   .ag-full { display: none; }
   .ag-short { display: inline; }
+}
+/* Phone-width panel: the name earns the space back from the track, and only
+   the first/last axis ticks survive. */
+@container (max-width: 560px) {
+  .ag-head, .ag-row { grid-template-columns: 1.7fr .6fr .55fr .35fr .5fr .65fr 1.7fr; gap: 7px; }
+  .ag-tick:not(:first-child):not(:last-child) { display: none; }
 }
 .ag-head { font-family: var(--ff-mono); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--tx-3); padding: 0 4px 10px; border-bottom: 1px solid var(--line); }
 .ag-head .r, .ag-row .r { text-align: right; justify-self: end; }
@@ -930,7 +937,60 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .loading-row { display: flex; flex-direction: column; gap: 12px; padding: 28px 40px; max-width: 880px; margin: 0 auto; }
 .loading-row .skeleton { height: 64px; }
 
+/* ============================================================
+   MOBILE
+   ============================================================ */
+.sidebar-backdrop { display: none; }
+
 @media (max-width: 820px) {
-  .app { grid-template-columns: 0 1fr; }
-  .agents-view { grid-template-columns: 240px 1fr; }
+  /* The sidebar column collapses and the sidebar becomes an overlay drawer:
+     the toolbar button toggles it, tapping the backdrop (or picking a
+     session) closes it. */
+  /* The fixed-position sidebar leaves the grid flow, so main becomes the
+     only in-flow item and gets the single full-width track. */
+  .app, .app.no-sidebar { grid-template-columns: 1fr; }
+  .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: min(84vw, 320px); z-index: 60; box-shadow: 24px 0 60px rgb(0 0 0 / .3); }
+  .sidebar-resize { display: none; }
+  .sidebar-backdrop { display: block; position: fixed; inset: 0; background: rgb(0 0 0 / .45); z-index: 55; }
+
+  /* Agents view: tree rail stacks above the detail pane. */
+  .agents-view { grid-template-columns: 1fr; grid-template-rows: minmax(0, 38vh) minmax(0, 1fr); }
+  .tree-rail { border-right: none; border-bottom: 1px solid var(--line); }
+
+  /* Stats panels stack in one column. */
+  .stats-grid { grid-template-columns: 1fr; }
+  .panel.span-2 { grid-column: span 1; }
+}
+
+@media (max-width: 700px) {
+  .toolbar { gap: 6px; padding: 0 10px; }
+  .viewtab { padding: 6px 10px; gap: 0; }
+  .viewtab > span:not(.viewtab-count) { display: none; } /* icons only */
+  .viewtab .viewtab-count { margin-left: 6px; }
+  .toolbar-meta { display: none; }
+  .searchbox.open input { width: min(40vw, 180px); }
+}
+
+@media (max-width: 640px) {
+  /* stats */
+  .stats-view { padding: 14px 12px 70px; }
+  .bigstats { grid-template-columns: repeat(2, 1fr); gap: 9px; }
+  .bigstat { padding: 13px 14px; }
+  .bigstat-val { font-size: 21px; }
+  .stats-grid { gap: 10px; }
+  .panel-head { flex-wrap: wrap; column-gap: 10px; row-gap: 2px; }
+  .panel-body { padding: 13px 13px 14px; }
+  .cache-row { flex-direction: column; gap: 14px; }
+  .cache-row .donut { align-self: center; }
+  .tf-row { grid-template-columns: minmax(0, 45%) 1fr 34px; gap: 8px; }
+
+  /* conversation */
+  .conv-inner { padding: 16px 12px 70px; }
+  .msg { grid-template-columns: 58px 1fr; gap: 9px; }
+  .conv-head-stats { gap: 14px; }
+
+  /* agent detail */
+  .adetail { padding: 16px 12px 60px; }
+  .adetail-stats { grid-template-columns: repeat(2, 1fr); }
+  .loading-row { padding: 20px 14px; }
 }

@@ -44,7 +44,10 @@ function App() {
   const [trace, setTrace] = useState<NormTrace | null>(null);
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<ViewKey>(initial.view);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // On phones the sidebar is an overlay drawer (see the mobile CSS section),
+  // so it starts closed there instead of covering the content.
+  const isMobile = () => typeof window !== "undefined" && window.innerWidth <= 820;
+  const [sidebarOpen, setSidebarOpen] = useState(() => !isMobile());
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshSpin, setRefreshSpin] = useState(0);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
@@ -272,7 +275,7 @@ function App() {
         onSelectProject={(p) => { setSelectedProject(p); setSelectedSession(null); setRecords([]); setTargetMsg(null); setTargetBlock(null); }}
         sessions={sessions}
         selectedSession={selectedSession}
-        onSelectSession={(s) => { setSelectedSession(s); setTargetMsg(null); setTargetBlock(null); }}
+        onSelectSession={(s) => { setSelectedSession(s); setTargetMsg(null); setTargetBlock(null); if (isMobile()) setSidebarOpen(false); }}
         onDeleteSession={(id) => {
           fetch(`/api/projects/${encodeURIComponent(selectedProject!)}/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
             .then(() => {
@@ -286,6 +289,7 @@ function App() {
         }}
         onResizeStart={startResize}
       />
+      {sidebarOpen ? <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} /> : null}
       <main className="main">
         <Toolbar
           view={view}
