@@ -110,11 +110,27 @@ function adviceFor(ins: CacheInsights): string | null {
   return `${px} of ${n} rebuilds came from prefix changes — the system prompt or tool set changed mid-session; keeping them stable preserves the cache.`;
 }
 
+const MAX_CHART_BARS = 160;
+
 function CachePanel({ trace }: { trace: NormTrace }) {
-  const { ins, maxCtx, advice } = useMemo(() => {
+  const { ins, maxCtx, advice, display } = useMemo(() => {
     const ins = analyzeCache(trace);
     const maxCtx = Math.max(...ins.series.map(p => p.read + p.written + p.fresh), 1);
-    return { ins, maxCtx, advice: adviceFor(ins) };
+    // Long sessions have thousands of calls — more bars than pixels. Bucket for
+    // display: keep each bucket's biggest-context call, flag if any call rebuilt.
+    let display = ins.series;
+    if (display.length > MAX_CHART_BARS) {
+      const bucketSize = Math.ceil(display.length / MAX_CHART_BARS);
+      const out: typeof display = [];
+      for (let i = 0; i < ins.series.length; i += bucketSize) {
+        const slice = ins.series.slice(i, i + bucketSize);
+        let top = slice[0];
+        for (const p of slice) if (p.read + p.written + p.fresh > top.read + top.written + top.fresh) top = p;
+        out.push({ ...top, rebuild: slice.some(p => p.rebuild) });
+      }
+      display = out;
+    }
+    return { ins, maxCtx, advice: adviceFor(ins), display };
   }, [trace]);
   return (
     <div className="cachep">
@@ -143,7 +159,7 @@ function CachePanel({ trace }: { trace: NormTrace }) {
       </div>
 
       <div className="cachep-chart" role="img" aria-label={`Context per API call — ${ins.series.length} calls`}>
-        {ins.series.map((p, i) => {
+        {display.map((p, i) => {
           const ctx = p.read + p.written + p.fresh;
           const h = Math.max((ctx / maxCtx) * 100, 2);
           const wh = ctx ? (p.written / ctx) * h : 0;
