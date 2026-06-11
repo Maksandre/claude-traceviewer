@@ -101,7 +101,7 @@ function extractText(content: ContentBlock["content"] | string | undefined): str
 
 function toolResultIsError(content: ContentBlock["content"] | string | undefined): boolean {
   const t = extractText(content);
-  return t.includes("error") && t.toLowerCase().startsWith("error");
+  return t.toLowerCase().startsWith("error");
 }
 
 interface MergedAssistant {
@@ -404,33 +404,28 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
   addUsage(allTotals, mainNorm.usage);
   for (const a of agents) addUsage(allTotals, a.usage);
 
-  const modelMix: Record<ModelFamily, number> = { fable: 0, opus: 0, sonnet: 0, haiku: 0 };
-  for (const m of mainNorm.messages) {
-    if (m.role !== "assistant") continue;
-    modelMix[modelFamily(m.model)] += m.usage.input + m.usage.output + m.usage.cw + m.usage.cr;
-  }
-  for (const a of agents) {
-    for (const m of a.messages) {
+  const familyAcc: Record<ModelFamily, { tokens: number; cost: number }> = {
+    fable: { tokens: 0, cost: 0 }, opus: { tokens: 0, cost: 0 },
+    sonnet: { tokens: 0, cost: 0 }, haiku: { tokens: 0, cost: 0 },
+  };
+  const accModels = (msgs: NormMsg[]) => {
+    for (const m of msgs) {
       if (m.role !== "assistant") continue;
-      modelMix[modelFamily(m.model)] += m.usage.input + m.usage.output + m.usage.cw + m.usage.cr;
+      const fam = modelFamily(m.model);
+      familyAcc[fam].tokens += m.usage.input + m.usage.output + m.usage.cw + m.usage.cr;
+      familyAcc[fam].cost += m.usage.cost;
     }
-  }
+  };
+  accModels(mainNorm.messages);
+  for (const a of agents) accModels(a.messages);
 
-  const modelStats = (Object.keys(modelMix) as ModelFamily[])
-    .map(family => {
-      let tokens = 0, cost = 0;
-      const acc = (msgs: NormMsg[]) => {
-        for (const m of msgs) {
-          if (m.role !== "assistant" || modelFamily(m.model) !== family) continue;
-          tokens += m.usage.input + m.usage.output + m.usage.cw + m.usage.cr;
-          cost += m.usage.cost;
-        }
-      };
-      acc(mainNorm.messages);
-      for (const a of agents) acc(a.messages);
-      return { family, tokens, cost };
-    })
-    .filter(m => m.tokens > 0)
+  const modelMix: Record<ModelFamily, number> = {
+    fable: familyAcc.fable.tokens, opus: familyAcc.opus.tokens,
+    sonnet: familyAcc.sonnet.tokens, haiku: familyAcc.haiku.tokens,
+  };
+  const modelStats = (Object.entries(familyAcc) as [ModelFamily, { tokens: number; cost: number }][])
+    .filter(([, v]) => v.tokens > 0)
+    .map(([family, v]) => ({ family, tokens: v.tokens, cost: v.cost }))
     .sort((a, b) => b.cost - a.cost);
 
   const toolFreq: Record<string, number> = {};
