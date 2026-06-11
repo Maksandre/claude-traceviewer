@@ -590,13 +590,14 @@ export function StatsView({ trace, onOpenAgent, onOpenMessage }: Props) {
           <CachePanel trace={trace} onOpenMessage={onOpenMessage} />
         </Panel>
 
-        <Panel title="Cost & models" sub="by spend">
-          <CostModels trace={trace} />
-        </Panel>
-
-        <Panel title="Friction" sub="errors & interruptions">
-          <FrictionPanel trace={trace} onOpenMessage={onOpenMessage} />
-        </Panel>
+        <div className="stats-col">
+          <Panel title="Cost & models" sub="by spend">
+            <CostModels trace={trace} />
+          </Panel>
+          <Panel title="Friction" sub="errors & interruptions">
+            <FrictionPanel trace={trace} onOpenMessage={onOpenMessage} />
+          </Panel>
+        </div>
 
         <Panel title="Where the time went" span={2} sub="working vs waiting · click a stall to jump">
           <TimeSpentPanel trace={trace} onOpenMessage={onOpenMessage} />

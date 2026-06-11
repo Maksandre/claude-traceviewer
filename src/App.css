@@ -752,6 +752,7 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .bigstat-sub { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-3); margin-top: 6px; }
 
 .stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
+.stats-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
 /* single-column override lives in the MOBILE section at the end of the file —
    it must come after .panel.span-2 in source order to win */
 .panel { background: var(--bg-1); border: 1px solid var(--line-soft); border-radius: var(--r-lg); overflow: hidden; }
@@ -1028,6 +1029,7 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
   .bigstat { padding: 13px 14px; }
   .bigstat-val { font-size: 21px; }
   .stats-grid { gap: 10px; }
+  .stats-col { gap: 10px; }
   .panel-head { flex-wrap: wrap; column-gap: 10px; row-gap: 2px; }
   .panel-body { padding: 13px 13px 14px; }
   .tf-row { grid-template-columns: minmax(0, 45%) 1fr 34px; gap: 8px; }
