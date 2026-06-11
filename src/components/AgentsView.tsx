@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { agentColor, agentMeta, fmtCost, fmtDur, fmtTokens, modelColor, modelLabel } from "../lib/format";
+import { agentColor, agentMeta, contextWindow, fmtCost, fmtDur, fmtTokens, modelColor, modelLabel } from "../lib/format";
 import { Icons } from "../lib/icons";
 import { CodeBlock, Markdown } from "../lib/md";
 import type { NormAgent, NormTrace } from "../lib/normalize";
@@ -117,7 +117,7 @@ export function AgentDetail({ agent, onOpenAgent, settings }: { agent: NormAgent
         <StatPill icon={Icons.layers} label="messages" value={agent.msgCount} />
         <StatPill icon={Icons.terminal} label="tool calls" value={tools} />
         <StatPill icon={Icons.hash} label="output tok" value={fmtTokens(u.output)} color="var(--tx-1)" />
-        <StatPill icon={Icons.refresh} label="cache read" value={fmtTokens(u.cr)} color="var(--sonnet)" />
+        <StatPill icon={Icons.layers} label="peak ctx" value={`${fmtTokens(agent.peakContext)} / ${fmtTokens(contextWindow(agent.model))}`} color="var(--sonnet)" />
       </div>
 
       <div className="adetail-toolstrip">
@@ -275,6 +275,7 @@ function MainDetail({ trace, onSelect, onGotoConversation }: { trace: NormTrace;
         <StatPill icon={Icons.coins} label="main cost" value={fmtCost(trace.main.usage.cost)} color="var(--accent)" />
         <StatPill icon={Icons.clock} label="session" value={fmtDur(s.durationMs)} />
         <StatPill icon={Icons.terminal} label="direct tools" value={mainTools} />
+        <StatPill icon={Icons.layers} label="peak ctx" value={`${fmtTokens(trace.main.peakContext)} / ${fmtTokens(contextWindow(trace.session.models[0]))}`} color="var(--sonnet)" />
         <StatPill icon={Icons.agent} label="subagents" value={trace.agents.length} color="var(--tool-agent)" />
       </div>
       <div className="adetail-toolstrip">

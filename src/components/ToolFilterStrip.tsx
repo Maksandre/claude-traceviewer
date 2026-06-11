@@ -1,5 +1,6 @@
 import { toolColor } from "../lib/format";
 import { toolIcon } from "../lib/icons";
+import { ToolName } from "./ToolName";
 
 interface Props {
   counts: Record<string, number>;
@@ -39,7 +40,7 @@ export function ToolFilterStrip({ counts, selected, onToggle, onClear, emptyText
               title={isSelected ? `Remove ${n} from filter` : `Show only messages with ${n}`}
             >
               <TI size={12} />
-              <span>{n}</span>
+              <span><ToolName name={n} /></span>
               <b className="tnum">{c}</b>
             </button>
           );
@@ -47,7 +48,7 @@ export function ToolFilterStrip({ counts, selected, onToggle, onClear, emptyText
         return (
           <span key={n} className={cls} style={{ "--tc": col } as React.CSSProperties}>
             <TI size={12} />
-            <span>{n}</span>
+            <span><ToolName name={n} /></span>
             <b className="tnum">{c}</b>
           </span>
         );

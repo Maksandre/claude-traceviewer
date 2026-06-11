@@ -6,6 +6,7 @@ import { Caret, ClampBlock, CodeBlock, Markdown, MoreButton } from "../../lib/md
 import type { NormAgent, NormBlock, NormMsg, NormToolResult } from "../../lib/normalize";
 import { toolColor } from "../../lib/format";
 import { usePermalinks } from "../../lib/permalinkCtx";
+import { ToolName } from "../ToolName";
 
 // Shared copy-link primitive. Falls back from the Clipboard API to a
 // hidden textarea + execCommand when the page isn't served over a
@@ -51,7 +52,7 @@ export function MsgPermalink({ msgKey }: { msgKey: string }) {
     e.stopPropagation();
     api?.selectTarget(msgKey, null);
     const msg = (e.currentTarget as HTMLElement).closest(".msg") as HTMLElement | null;
-    msg?.scrollIntoView({ behavior: "smooth", block: "start" });
+    msg?.scrollIntoView({ behavior: "auto", block: "start" });
     flashTarget(msg);
     copyPermalink({ msg: msgKey }, () => {
       setCopied(true);
@@ -82,7 +83,7 @@ export function BlockPermalink({ msgKey, blockId, label }: { msgKey: string; blo
     e.stopPropagation();
     api?.selectTarget(msgKey, blockId);
     const anchor = (e.currentTarget as HTMLElement).closest(".blk-anchor") as HTMLElement | null;
-    anchor?.scrollIntoView({ behavior: "smooth", block: "start" });
+    anchor?.scrollIntoView({ behavior: "auto", block: "start" });
     flashTarget(anchor);
     copyPermalink({ msg: msgKey, block: blockId }, () => {
       setCopied(true);
@@ -206,7 +207,7 @@ export function ToolCard({ block, result, defaultOpen }: { block: NormBlock; res
         <span className="blk-ic tool-ic" style={{ color: col, background: `color-mix(in oklch, ${col} 16%, transparent)` }}>
           <TI size={13} />
         </span>
-        <span className="tool-name">{block.name}</span>
+        <span className="tool-name"><ToolName name={block.name} /></span>
         {summary ? <span className="tool-summary">{summary}</span> : null}
         <span className="tool-status">
           {hasResult ? (
@@ -611,10 +612,40 @@ function Lightbox({ items, index, onClose, onIndex }: { items: ImgItem[]; index:
           <div className="lightbox-count mono">{index + 1} / {items.length}</div>
         </>
       ) : null}
-      <img className="lightbox-img" src={it.src} alt={it.alt} onClick={(e) => e.stopPropagation()} />
+      <LightboxImage key={it.src} src={it.src} alt={it.alt} />
       {it.alt ? <div className="lightbox-caption mono">{it.alt}</div> : null}
     </div>,
     document.body
+  );
+}
+
+// A muted placeholder shown when an image can't be loaded (the source file
+// was cleaned up, the path moved, etc.) — beats the browser's broken-image
+// glyph. Carries the filename so it's still identifiable.
+function MissingImage({ alt }: { alt: string }) {
+  return (
+    <div className="img-missing" title={`${alt} — image unavailable`}>
+      <Icons.image size={22} />
+      <span className="img-missing-name">{alt}</span>
+      <span className="img-missing-hint">image unavailable</span>
+    </div>
+  );
+}
+
+function LightboxImage({ src, alt }: { src: string; alt: string }) {
+  const [errored, setErrored] = useState(false);
+  if (errored) return <div className="lightbox-missing"><MissingImage alt={alt} /></div>;
+  return <img className="lightbox-img" src={src} alt={alt} onClick={(e) => e.stopPropagation()} onError={() => setErrored(true)} />;
+}
+
+function Thumb({ it, onOpen }: { it: ImgItem; onOpen: () => void }) {
+  const [errored, setErrored] = useState(false);
+  if (errored) return <div className="img-thumb is-missing"><MissingImage alt={it.alt} /></div>;
+  return (
+    <button type="button" className="img-thumb" onClick={onOpen} title={it.alt}>
+      <img src={it.src} loading="lazy" alt={it.alt} onError={() => setErrored(true)} />
+      <span className="img-thumb-overlay"><Icons.zoomIn size={12} /></span>
+    </button>
   );
 }
 
@@ -622,12 +653,7 @@ function ImageGallery({ items, onOpen }: { items: ImgItem[]; onOpen: (ix: number
   if (!items.length) return null;
   return (
     <div className="img-gallery">
-      {items.map((it, i) => (
-        <button key={it.key + i} type="button" className="img-thumb" onClick={() => onOpen(i)} title={it.alt}>
-          <img src={it.src} loading="lazy" alt={it.alt} />
-          <span className="img-thumb-overlay"><Icons.zoomIn size={12} /></span>
-        </button>
-      ))}
+      {items.map((it, i) => <Thumb key={it.key + i} it={it} onOpen={() => onOpen(i)} />)}
     </div>
   );
 }
@@ -735,7 +761,11 @@ export function UserGroup({ msgs, extraClass = "", permalinks = true }: { msgs: 
           {permalinks ? <MsgPermalink msgKey={first.uuid} /> : null}
         </div>
         <div className="msg-blocks" onClick={onBlocksClick}>
-          {cleanedMsgs.map((m, i) => <UserBody key={m.uuid || i} msg={m} />)}
+          {cleanedMsgs.map((m, i) => (
+            permalinks
+              ? <BlockAnchor key={m.uuid || i} msgKey={first.uuid} blockId={m.uuid || `part-${i}`} entityLabel="message"><UserBody msg={m} /></BlockAnchor>
+              : <UserBody key={m.uuid || i} msg={m} />
+          ))}
           {items.length ? <ImageGallery items={items} onOpen={setLightboxIx} /> : null}
         </div>
       </div>

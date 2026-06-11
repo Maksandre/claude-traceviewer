@@ -12,6 +12,10 @@ export interface ProjectMeta {
   name: string;
   sessionCount: number;
   mtime: number;
+  /** Real working directory from the session records. Used for display because
+   * the encoded `name` replaces every "/" with "-" and is ambiguous for
+   * directory names that legitimately contain dashes. */
+  cwd?: string;
 }
 
 export interface ContentBlock {
@@ -26,6 +30,8 @@ export interface ContentBlock {
   content?: string | ContentBlock[];
   source?: { type: string; media_type: string; data: string };
   caller?: { type: string };
+  /** Anthropic marks failed tool results with this; preferred over text heuristics. */
+  is_error?: boolean;
 }
 
 export interface TraceRecord {

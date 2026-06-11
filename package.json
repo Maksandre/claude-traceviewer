@@ -1,5 +1,5 @@
 {
-  "name": "claude-trace-viewer",
+  "name": "debrief",
   "private": true,
   "version": "0.0.0",
   "type": "module",
@@ -8,6 +8,7 @@
     "server": "tsx server.ts",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
+    "test": "vitest run",
     "preview": "vite preview",
     "start": "tsx server.ts"
   },
@@ -34,6 +35,7 @@
     "globals": "^17.4.0",
     "typescript": "~6.0.2",
     "typescript-eslint": "^8.58.0",
-    "vite": "^8.0.4"
+    "vite": "^8.0.4",
+    "vitest": "^4.1.8"
   }
 }

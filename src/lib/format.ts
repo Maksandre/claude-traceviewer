@@ -9,6 +9,22 @@ export function fmtTokensFull(n: number | null | undefined): string {
   return (n || 0).toLocaleString("en-US");
 }
 
+/** Coarse token count for tight layouts: 4.02M → "4M", 777k → "0.8M", 25k → "25k". */
+export function fmtTokensShort(n: number | null | undefined): string {
+  if (n == null) return "0";
+  if (n >= 950_000) return Math.round(n / 1e6) + "M";
+  if (n >= 100_000) return (n / 1e6).toFixed(1) + "M";
+  if (n >= 1_000) return Math.round(n / 1e3) + "k";
+  return String(n);
+}
+
+/** Coarse duration for tight layouts: 10m 47s → "11m", 39s → "39s". */
+export function fmtDurShort(ms: number | null | undefined): string {
+  if (ms == null) return "—";
+  if (ms >= 60_000) return Math.round(ms / 60_000) + "m";
+  return Math.round(ms / 1000) + "s";
+}
+
 export function fmtCost(n: number | null | undefined): string {
   if (n == null) return "$0";
   if (n >= 1) return "$" + n.toFixed(2);
@@ -57,6 +73,13 @@ export function modelFamily(m?: string | null): ModelFamily {
   return "sonnet";
 }
 
+/* Context window (max input tokens) by model. Fable 5, Opus 4.6+, and
+   Sonnet 4.6 are 1M; Haiku is 200K. Once a session's per-call context nears
+   this, the harness compacts. */
+export function contextWindow(m?: string | null): number {
+  return modelFamily(m) === "haiku" ? 200_000 : 1_000_000;
+}
+
 export function modelLabel(m?: string | null): string {
   const fam = modelFamily(m);
   const cap = fam.charAt(0).toUpperCase() + fam.slice(1);
@@ -90,6 +113,20 @@ export function toolColor(name?: string | null): string {
   const c = toolCat(name);
   return ({ read: "var(--tool-read)", write: "var(--tool-write)", exec: "var(--tool-exec)",
     agent: "var(--tool-agent)", web: "var(--tool-web)", mcp: "var(--accent)", other: "var(--tx-2)" } as const)[c];
+}
+
+/** Split an MCP tool id ("mcp__<server>__<tool>") into display parts, or null
+ * for regular tools. The server segment is prettified for display: the
+ * "claude_ai_" prefix that claude.ai-hosted connectors add is noise, and
+ * underscores read better as spaces ("claude_ai_Google_Drive" → "Google Drive"). */
+export function mcpToolName(name?: string | null): { server: string; tool: string } | null {
+  if (!name || !name.startsWith("mcp__")) return null;
+  const rest = name.slice(5);
+  const sep = rest.indexOf("__");
+  if (sep <= 0 || sep + 2 >= rest.length) return null;
+  const raw = rest.slice(0, sep);
+  const server = raw.replace(/^claude_ai_/, "").replace(/_+/g, " ").trim();
+  return { server: server || raw, tool: rest.slice(sep + 2) };
 }
 
 export interface AgentMeta { hue: number; }
@@ -138,12 +175,27 @@ function lookupRates(model: string | undefined | null): PerTokenRates {
   return FAMILY_FALLBACK[modelFamily(model)];
 }
 
+function resolveCacheRates(r: PerTokenRates): { cw: number; cr: number } {
+  return {
+    cw: r.cache_creation_input_token_cost ?? r.input_cost_per_token * 1.25,
+    cr: r.cache_read_input_token_cost     ?? r.input_cost_per_token * 0.10,
+  };
+}
+
+/** Per-token cache pricing for a model: base input rate, cache-write rate
+ * (~1.25x input), cache-read rate (~0.1x input). Used by cacheInsights. */
+export function cacheRates(model: string | undefined | null): { input: number; cw: number; cr: number } {
+  const r = lookupRates(model);
+  return { input: r.input_cost_per_token, ...resolveCacheRates(r) };
+}
+
 export function costFor(model: string | undefined | null, u: { input: number; output: number; cw: number; cr: number }): number {
   const r = lookupRates(model);
+  const { cw, cr } = resolveCacheRates(r);
   return (
     u.input  * r.input_cost_per_token +
     u.output * r.output_cost_per_token +
-    u.cw     * (r.cache_creation_input_token_cost ?? r.input_cost_per_token * 1.25) +
-    u.cr     * (r.cache_read_input_token_cost     ?? r.input_cost_per_token * 0.10)
+    u.cw     * cw +
+    u.cr     * cr
   );
 }

@@ -134,9 +134,12 @@ button { font-family: inherit; }
 .sidebar-resize { position: absolute; top: 0; right: 0; bottom: 0; width: 4px; cursor: col-resize; z-index: 5; background: transparent; transition: background .15s; }
 .sidebar-resize:hover, .sidebar-resize.active { background: var(--accent-line); }
 .brand { display: flex; align-items: center; gap: 11px; padding: 16px 18px; border-bottom: 1px solid var(--line-soft); }
-.brand-mark { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: #fff;
-  background: linear-gradient(140deg, var(--accent), oklch(0.6 0.13 calc(var(--accent-h) + 18)));
-  box-shadow: 0 2px 8px -2px var(--accent-line); flex-shrink: 0; }
+/* Bare logo, no box/outline. The art is black, so invert it in dark mode to
+   stay visible on the dark sidebar; light mode shows it as-is. scale() crops
+   the PNG's transparent padding so the cube reads larger. */
+.brand-mark { width: 48px; height: 48px; display: grid; place-items: center; flex-shrink: 0; overflow: hidden; }
+.brand-mark img { width: 100%; height: 100%; object-fit: contain; transform: scale(1.35); display: block; }
+[data-theme="dark"] .brand-mark img { filter: invert(1); }
 .brand-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
 .brand-name { font-weight: 700; font-size: 14.5px; letter-spacing: -.01em; white-space: nowrap; }
 .brand-sub { font-size: 10.5px; color: var(--tx-3); }
@@ -254,10 +257,12 @@ button { font-family: inherit; }
 .conv-row-header { padding-top: 26px; padding-bottom: 8px; }
 .conv-row-footer { padding-top: 12px; padding-bottom: 80px; }
 .conv-row-spacer { height: 80px; }
-.jump-bottom { position: absolute; right: 22px; bottom: 22px; width: 38px; height: 38px; border-radius: 99px; border: 1px solid var(--line); background: var(--bg-1); color: var(--tx-1); display: grid; place-items: center; cursor: pointer; box-shadow: 0 6px 18px -6px rgba(0,0,0,.35); opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity .18s ease, transform .18s ease, background .14s, color .14s; }
-.jump-bottom.visible { opacity: 1; transform: none; pointer-events: auto; }
-.jump-bottom:hover { background: var(--bg-2); color: var(--accent); border-color: var(--accent-line); }
-.jump-bottom:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+.jump-bottom, .jump-top { position: absolute; right: 22px; width: 38px; height: 38px; border-radius: 99px; border: 1px solid var(--line); background: var(--bg-1); color: var(--tx-1); display: grid; place-items: center; cursor: pointer; box-shadow: 0 6px 18px -6px rgba(0,0,0,.35); opacity: 0; transform: translateY(8px); pointer-events: none; transition: opacity .18s ease, transform .18s ease, background .14s, color .14s; }
+.jump-bottom { bottom: 22px; }
+.jump-top { bottom: 68px; }
+.jump-bottom.visible, .jump-top.visible { opacity: 1; transform: none; pointer-events: auto; }
+.jump-bottom:hover, .jump-top:hover { background: var(--bg-2); color: var(--accent); border-color: var(--accent-line); }
+.jump-bottom:focus-visible, .jump-top:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 
 .conv-head { display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; padding-bottom: 20px; margin-bottom: 22px; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
 .conv-title { margin: 0 0 9px; font-size: 24px; font-weight: 700; letter-spacing: -.02em; }
@@ -268,6 +273,7 @@ button { font-family: inherit; }
 .conv-head-stats { display: flex; gap: 22px; }
 .chs { display: flex; flex-direction: column; align-items: flex-end; }
 .chs-v { font-family: var(--ff-mono); font-size: 19px; font-weight: 600; }
+.chs-sub { color: var(--tx-3); font-weight: 400; font-size: 14px; }
 .chs-l { font-size: 10.5px; color: var(--tx-3); text-transform: uppercase; letter-spacing: .06em; }
 
 .empty-state { display: grid; place-items: center; height: 100%; color: var(--tx-2); font-size: 14px; text-align: center; padding: 40px; }
@@ -355,8 +361,8 @@ button { font-family: inherit; }
    padding area can bridge :hover and serve as the sticky container.
    - top:0/bottom:0 → covers the block's full vertical range, so mouse
      traversal anywhere alongside the block keeps the button visible.
-   - padding-top:14 → pushes the button down to roughly card-header
-     baseline (card padding is 13px), so it doesn't float above content.
+   - padding-top:4 → vertically centers the 32px button on the block's
+     40px header row, so it lines up with the header instead of floating low.
    - padding-left:12 → gives a 12px visual gap between the block's
      right edge and the button, so the button no longer looks glued. */
 .blk-permalink-slot {
@@ -365,13 +371,13 @@ button { font-family: inherit; }
   bottom: 0;
   right: -56px;
   width: 56px;
-  padding: 14px 0 0 12px;
+  padding: 4px 0 0 12px;
   pointer-events: auto;
   z-index: 2;
 }
 .blk-permalink {
   position: sticky;
-  top: 14px;
+  top: 4px;
   width: 32px; height: 32px; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
   border: 1px solid var(--line-soft); background: var(--bg-1); color: var(--tx-2);
@@ -613,6 +619,14 @@ button { font-family: inherit; }
 .img-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .img-thumb-overlay { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; opacity: 0; background: color-mix(in oklch, #000 35%, transparent); transition: opacity .15s; pointer-events: none; }
 .img-thumb:hover .img-thumb-overlay { opacity: 1; }
+/* Placeholder for images whose source file is gone — beats the broken-image glyph. */
+.img-thumb.is-missing { cursor: default; border-style: dashed; }
+.img-thumb.is-missing:hover { border-color: var(--line); }
+.img-missing { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 6px; text-align: center; background: var(--bg-2); color: var(--tx-3); }
+.img-missing-name { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-1); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.img-missing-hint { font-family: var(--ff-mono); font-size: 9px; color: var(--tx-3); letter-spacing: .03em; }
+.lightbox-missing { display: grid; place-items: center; }
+.lightbox-missing .img-missing { width: 240px; height: 180px; border: 1px dashed var(--line); border-radius: var(--r-md); }
 
 /* [Image #N] inline references styled as small clickable chips */
 .user-bubble a[href^="#image:"] { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); text-decoration: none; border-bottom: none; font-family: var(--ff-mono); font-size: 0.9em; cursor: zoom-in; transition: background .15s, color .15s; }
@@ -741,7 +755,7 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
    STATS VIEW
    ============================================================ */
 .stats-view { max-width: 1100px; margin: 0 auto; padding: 26px 30px 80px; }
-.bigstats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 14px; }
+.bigstats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 14px; }
 @media (max-width: 980px) { .bigstats { grid-template-columns: repeat(3, 1fr); } }
 .bigstat { background: var(--bg-1); border: 1px solid var(--line-soft); border-radius: var(--r-lg); padding: 16px 17px; }
 .bigstat.accent { background: linear-gradient(160deg, var(--accent-soft), var(--bg-1)); border-color: var(--accent-line); }
@@ -750,9 +764,17 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .bigstat-label { font-family: var(--ff-mono); font-size: 10px; color: var(--tx-3); text-transform: uppercase; letter-spacing: .07em; font-weight: 600; }
 .bigstat-val { font-family: var(--ff-mono); font-size: 27px; font-weight: 600; letter-spacing: -.02em; line-height: 1; }
 .bigstat-sub { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-3); margin-top: 6px; }
+.bigstat-gauge { margin-top: 8px; height: 4px; border-radius: 99px; background: var(--bg-3); overflow: hidden; }
+.bigstat-gauge > span { display: block; height: 100%; border-radius: 99px; transition: width .3s ease; }
 
-.stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
-@media (max-width: 820px) { .stats-grid { grid-template-columns: 1fr; } .panel.span-2 { grid-column: span 1; } }
+/* align-items:start so a short panel (Cost & models) doesn't stretch tall to
+   match its row neighbour (Friction) and reopen the empty-space problem. */
+.stats-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; align-items: start; }
+/* Stacks the two shorter panels (Cost & models + Where the time went) in one
+   column beside the taller Friction panel, so the row packs compactly. */
+.stats-col { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+/* single-column override lives in the MOBILE section at the end of the file —
+   it must come after .panel.span-2 in source order to win */
 .panel { background: var(--bg-1); border: 1px solid var(--line-soft); border-radius: var(--r-lg); overflow: hidden; }
 .panel.span-2 { grid-column: span 2; }
 .panel-head { display: flex; justify-content: space-between; align-items: baseline; padding: 15px 18px 0; }
@@ -760,33 +782,126 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .panel-sub { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-3); }
 .panel-body { padding: 16px 18px 18px; }
 
-.cache-row { display: flex; gap: 20px; align-items: center; }
-.donut-pct { font-family: var(--ff-mono); font-size: 18px; font-weight: 600; fill: var(--tx-0); }
-.donut-lbl { font-family: var(--ff-mono); font-size: 8px; fill: var(--tx-3); text-transform: uppercase; letter-spacing: .1em; }
-.cache-legend { flex: 1; display: flex; flex-direction: column; gap: 9px; }
-.cl-item { display: flex; align-items: center; gap: 9px; font-size: 12.5px; color: var(--tx-1); }
-.cl-dot { width: 9px; height: 9px; border-radius: 3px; flex-shrink: 0; }
-.cl-item b { margin-left: auto; color: var(--tx-0); font-family: var(--ff-mono); }
-.cl-note { font-family: var(--ff-mono); font-size: 10.5px; color: var(--tx-3); line-height: 1.5; margin-top: 4px; }
+/* Prompt caching panel: savings/waste chips, per-call context bars, rebuild events */
+.cachep { display: flex; flex-direction: column; gap: 12px; }
+.cachep-chips { display: flex; gap: 10px; flex-wrap: wrap; }
+.cachep-chip { flex: 1; min-width: 110px; background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 9px 12px; display: flex; flex-direction: column; gap: 3px; }
+.cachep-k { font-family: var(--ff-mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--tx-3); }
+.cachep-v { font-family: var(--ff-mono); font-size: 17px; font-weight: 600; color: var(--tx-0); }
+.cachep-v.ok { color: var(--ok); }
+.cachep-v.warn { color: var(--warn); }
+.cachep-causes { font-family: var(--ff-mono); font-size: 10px; color: var(--tx-3); }
+.cachep-caption { font-family: var(--ff-mono); font-size: 10px; color: var(--tx-3); }
+.ctl { display: flex; flex-direction: column; gap: 6px; }
+.ctl-svg { width: 100%; height: 64px; display: block; }
+.ctl-area { fill: color-mix(in oklch, var(--sonnet) 18%, transparent); }
+.ctl-line { fill: none; stroke: var(--sonnet); stroke-width: 0.6; vector-effect: non-scaling-stroke; }
+.ctl-break { stroke: var(--tx-3); stroke-width: 0.5; vector-effect: non-scaling-stroke; opacity: .3; }
+/* Rebuild markers: a full-height red line with a wide transparent hit
+   target — immune to the SVG's preserveAspectRatio stretch and far easier
+   to click than a point. */
+.ctl-mark { cursor: pointer; }
+.ctl-mark-hit { fill: transparent; }
+.ctl-mark-line { stroke: var(--err); stroke-width: 1.3; vector-effect: non-scaling-stroke; opacity: .62; }
+.ctl-mark:hover .ctl-mark-line,
+.ctl-mark.is-hover .ctl-mark-line { opacity: 1; stroke-width: 2.4; }
+/* Small ⏸ glyphs sit above each idle break line (positioned by x%). Just the
+   marker — durations would collide on sessions with many pauses, so they live
+   in the tooltip (and in the "Where the time went" panel). */
+.ctl-breakrow { position: relative; height: 11px; }
+.ctl-break-mark { position: absolute; top: 0; transform: translateX(-50%); font-size: 8px; line-height: 1; color: var(--tx-3); cursor: default; }
+.ctl-break-mark:hover { color: var(--tx-0); }
+/* Instant custom tooltip (no native-title delay, no help cursor). */
+.ctl-break-mark::after {
+  content: attr(data-tip);
+  position: absolute; bottom: 150%; left: 50%; transform: translateX(-50%);
+  background: var(--bg-3); color: var(--tx-0);
+  font-family: var(--ff-mono); font-size: 10px; letter-spacing: 0;
+  padding: 3px 7px; border-radius: var(--r-sm); white-space: nowrap;
+  border: 1px solid var(--line-soft); box-shadow: 0 3px 10px rgb(0 0 0 / .3);
+  opacity: 0; pointer-events: none; transition: opacity .08s ease; z-index: 6;
+}
+.ctl-break-mark:hover::after { opacity: 1; }
+.cachep-event-btn { border: none; background: transparent; width: 100%; text-align: left; font: inherit; cursor: pointer; color: inherit; }
+.cachep-event.cachep-event-btn:hover,
+.cachep-event.cachep-event-btn.is-hover { background: var(--bg-3); box-shadow: inset 2px 0 0 var(--err); }
+.cachep-events { display: flex; flex-direction: column; gap: 2px; max-height: 180px; overflow-y: auto; }
+.cachep-event { display: grid; grid-template-columns: 52px 1fr auto auto; gap: 10px; align-items: baseline; font-size: 12px; padding: 4px 6px; border-radius: var(--r-sm); }
+.cachep-event:nth-child(odd) { background: var(--bg-2); }
+.cachep-ev-time { font-family: var(--ff-mono); font-size: 10.5px; color: var(--tx-3); }
+.cachep-ev-cause { color: var(--tx-1); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cachep-ev-agent { font-family: var(--ff-mono); font-size: 10px; color: var(--tx-2); background: var(--bg-3); border-radius: 4px; padding: 1px 5px; margin-right: 6px; }
+.cachep-ev-tok { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-2); }
+.cachep-ev-cost { font-family: var(--ff-mono); font-size: 11.5px; font-weight: 600; color: var(--warn); }
+.cachep-empty { font-family: var(--ff-mono); font-size: 11.5px; color: var(--tx-3); padding: 4px 0; }
+.cachep-advice { font-size: 12px; line-height: 1.5; color: var(--tx-2); background: var(--bg-2); border-left: 3px solid var(--accent); border-radius: var(--r-sm); padding: 8px 12px; }
 
-.stackbar { display: flex; height: 30px; border-radius: 7px; overflow: hidden; gap: 2px; margin-bottom: 16px; background: var(--bg-2); }
-.stackseg { height: 100%; transition: width .6s ease; min-width: 3px; }
-.legend { display: flex; flex-direction: column; gap: 9px; }
-.legend-item { display: flex; align-items: center; gap: 9px; font-size: 13px; }
-.legend-dot { width: 10px; height: 10px; border-radius: 3px; }
-.legend-name { font-weight: 500; }
-.legend-val { margin-left: auto; font-weight: 600; font-family: var(--ff-mono); }
-.legend-sub { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-3); min-width: 64px; text-align: right; }
+.costmodels { display: flex; flex-direction: column; gap: 8px; }
+.cm-row { display: grid; grid-template-columns: 10px 64px 1fr auto auto; gap: 9px; align-items: center; }
+.cm-dot { width: 8px; height: 8px; border-radius: 99px; }
+.cm-name { font-size: 12.5px; color: var(--tx-1); }
+.cm-bar { height: 6px; background: var(--bg-3); border-radius: 99px; overflow: hidden; }
+.cm-bar-fill { display: block; height: 100%; border-radius: 99px; }
+.cm-tok { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-3); }
+.cm-cost { font-family: var(--ff-mono); font-size: 12px; font-weight: 600; color: var(--tx-0); }
+
+.friction { display: flex; flex-direction: column; gap: 10px; }
+.friction-summary { display: flex; gap: 16px; font-size: 12px; color: var(--tx-2); }
+.friction-stat b { color: var(--tx-0); margin-right: 4px; }
+.friction-stat b.warn { color: var(--warn); }
+.friction-group { display: flex; flex-direction: column; gap: 3px; }
+.friction-tool { font-family: var(--ff-mono); font-size: 12px; color: var(--tx-1); }
+.friction-count { color: var(--warn); }
+.friction-sample { border: none; background: var(--bg-2); border-left: 2px solid var(--err); border-radius: var(--r-sm); text-align: left; font-family: var(--ff-mono); font-size: 11px; color: var(--tx-2); padding: 4px 8px; cursor: pointer; width: 100%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.friction-sample:hover:not(:disabled) { background: var(--bg-3); color: var(--tx-0); }
+.friction-sample:disabled { cursor: default; opacity: .7; }
+
+.timespent { display: flex; flex-direction: column; gap: 8px; }
+/* Chronological strip — flex row of spans; no overflow:hidden so the hover
+   tooltips can escape upward. End spans get the rounded corners. */
+.ts-track { display: flex; height: 24px; gap: 1px; background: var(--bg-3); border-radius: var(--r-sm); }
+.ts-seg { min-width: 2px; border: none; padding: 0; cursor: pointer; position: relative; flex-basis: 0; transition: filter .1s; }
+.ts-seg:first-child { border-radius: var(--r-sm) 0 0 var(--r-sm); }
+.ts-seg:last-child { border-radius: 0 var(--r-sm) var(--r-sm) 0; }
+.ts-seg:hover { filter: brightness(1.25); }
+.ts-seg.ts-working { background: var(--tool-agent); }
+.ts-seg.ts-waiting { background: var(--warn); }
+.ts-seg.ts-away { background: color-mix(in oklch, var(--tx-3) 45%, var(--bg-3)); }
+/* Instant tooltip on each span (no native-title delay). */
+.ts-seg::after {
+  content: attr(data-tip);
+  position: absolute; bottom: 130%; left: 50%; transform: translateX(-50%);
+  background: var(--bg-3); color: var(--tx-0);
+  font-family: var(--ff-mono); font-size: 10px;
+  padding: 3px 7px; border-radius: var(--r-sm); white-space: nowrap;
+  border: 1px solid var(--line-soft); box-shadow: 0 3px 10px rgb(0 0 0 / .3);
+  opacity: 0; pointer-events: none; transition: opacity .08s ease; z-index: 6;
+}
+.ts-seg:hover::after { opacity: 1; }
+.ts-axis { display: flex; justify-content: space-between; gap: 10px; font-family: var(--ff-mono); font-size: 9.5px; color: var(--tx-3); }
+.ts-axis-mid { color: var(--tx-3); opacity: .8; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ts-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 12px; color: var(--tx-2); }
+.ts-legend b { color: var(--tx-0); margin-left: 5px; }
+.ts-dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
+.ts-dot.ts-work { background: var(--tool-agent); }
+.ts-dot.ts-wait { background: var(--warn); }
+.ts-dot.ts-away { background: color-mix(in oklch, var(--tx-3) 45%, var(--bg-3)); }
 
 .toolfreq-total { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-3); margin-bottom: 14px; }
 .tf-group { border-radius: var(--r-sm); }
 .tf-group.open { background: var(--bg-2); }
-.tf-row { display: grid; grid-template-columns: 170px 1fr 42px; align-items: center; gap: 12px; padding: 5px 8px; width: 100%; border: none; background: transparent; text-align: left; color: inherit; font: inherit; border-radius: var(--r-sm); transition: background .12s; }
+.tf-row { display: grid; grid-template-columns: 270px 1fr 42px; align-items: center; gap: 12px; padding: 5px 8px; width: 100%; border: none; background: transparent; text-align: left; color: inherit; font: inherit; border-radius: var(--r-sm); transition: background .12s; }
 .tf-row.tf-clickable { cursor: pointer; }
 .tf-row.tf-clickable:hover { background: var(--bg-2); }
 .tf-row.tf-static { cursor: default; }
 .tf-row.is-open { background: transparent; }
-.tf-name { display: flex; align-items: center; gap: 8px; font-family: var(--ff-mono); font-size: 12.5px; color: var(--tx-1); }
+.tf-name { display: flex; align-items: center; gap: 8px; font-family: var(--ff-mono); font-size: 12.5px; color: var(--tx-1); min-width: 0; overflow: hidden; white-space: nowrap; }
+
+/* Compact MCP tool names: tool name first, muted server tag after. The tool
+   part truncates under pressure; the tag never does. */
+.mcp-name { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.mcp-tool { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mcp-srv { flex: none; font-size: 9.5px; font-weight: 500; letter-spacing: .03em; line-height: 1; padding: 2.5px 5px; border-radius: 4px; color: var(--tx-2); background: var(--bg-3); white-space: nowrap; }
 .tf-ic { display: inline-flex; }
 .tf-caret { display: inline-flex; align-items: center; color: var(--tx-3); width: 11px; }
 .tf-caret-placeholder { width: 11px; }
@@ -811,35 +926,41 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .bar { height: 6px; border-radius: 99px; overflow: hidden; width: 100%; }
 .bar > div { height: 100%; border-radius: 99px; transition: width .5s cubic-bezier(.2,.8,.2,1); }
 
-.atable { display: flex; flex-direction: column; }
-.atable-head, .atable-row { display: grid; grid-template-columns: 1.6fr 1fr .8fr .6fr .7fr 1.1fr; gap: 12px; align-items: center; }
-.atable-head { font-family: var(--ff-mono); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--tx-3); padding: 0 4px 10px; border-bottom: 1px solid var(--line); }
-.atable-head .r, .atable-row .r { text-align: right; justify-self: end; }
-.atable-row { padding: 11px 4px; border-bottom: 1px solid var(--line-soft); border-radius: 0; border-left: none; border-right: none; border-top: none; background: transparent; cursor: pointer; transition: .13s; text-align: left; }
-.atable-row:hover:not(:disabled) { background: var(--bg-2); }
-.atable-row:disabled { cursor: default; }
-.atable-row.is-main { background: var(--accent-soft); }
+/* Agents panel: per-agent table columns + execution-timeline track per row.
+   The track column takes half the width; data columns stay compact. On a
+   narrow panel the tokens/time cells swap to coarse values (4M, 11m). */
+.agantt { display: flex; flex-direction: column; container-type: inline-size; }
+.ag-head, .ag-row { display: grid; grid-template-columns: 1.15fr .7fr .55fr .35fr .55fr .6fr 3.9fr; gap: 10px; align-items: center; }
+.ag-short { display: none; }
+@container (max-width: 900px) {
+  .ag-full { display: none; }
+  .ag-short { display: inline; }
+}
+/* Phone-width panel: the name earns the space back from the track, and only
+   the first/last axis ticks survive. */
+@container (max-width: 560px) {
+  .ag-head, .ag-row { grid-template-columns: 1.7fr .6fr .55fr .35fr .5fr .65fr 1.7fr; gap: 7px; }
+  .ag-tick:not(:first-child):not(:last-child) { display: none; }
+}
+.ag-head { font-family: var(--ff-mono); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--tx-3); padding: 0 4px 10px; border-bottom: 1px solid var(--line); }
+.ag-head .r, .ag-row .r { text-align: right; justify-self: end; }
+.ag-axis { position: relative; height: 12px; align-self: end; }
+.ag-tick { position: absolute; transform: translateX(-50%); white-space: nowrap; text-transform: none; }
+.ag-tick:first-child { transform: none; }
+.ag-tick:last-child { transform: translateX(-100%); }
+.ag-body { display: flex; flex-direction: column; max-height: 480px; overflow-y: auto; }
+.ag-row { padding: 8px 4px; border: none; border-bottom: 1px solid var(--line-soft); border-radius: 0; background: transparent; cursor: pointer; transition: background .13s; text-align: left; color: inherit; font: inherit; }
+.ag-row:hover:not(:disabled) { background: var(--bg-2); }
+.ag-row:disabled { cursor: default; }
+.ag-row.is-main { background: var(--accent-soft); }
 .at-name { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .at-dot { width: 8px; height: 8px; border-radius: 99px; flex-shrink: 0; }
 .at-type { font-family: var(--ff-mono); font-size: 12.5px; font-weight: 500; color: var(--tx-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .at-model { font-family: var(--ff-mono); font-size: 11.5px; }
 .at-tok { color: var(--tx-1); font-family: var(--ff-mono); }
-.at-cost { display: flex; align-items: center; gap: 9px; min-width: 0; }
-.at-costbar { width: 54px; flex-shrink: 0; }
-.atable-row .r.at-cost { justify-content: flex-end; }
-
-.timeline { }
-.tl-axis { position: relative; height: 16px; margin-left: 90px; margin-bottom: 8px; }
-.tl-tick { position: absolute; transform: translateX(-50%); font-family: var(--ff-mono); font-size: 10px; color: var(--tx-3); }
-.tl-tick:first-child { transform: none; }
-.tl-tick:last-child { transform: translateX(-100%); }
-.tl-rows { display: flex; flex-direction: column; gap: 7px; }
-.tl-row { display: grid; grid-template-columns: 84px 1fr; gap: 6px; align-items: center; }
-.tl-label { font-family: var(--ff-mono); font-size: 11px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tl-track { position: relative; height: 22px; background: var(--bg-2); border-radius: 5px; }
-.tl-bar { position: absolute; top: 0; height: 100%; border-radius: 5px; display: flex; align-items: center; padding: 0 7px; min-width: 3px; transition: .5s; }
-.tl-bar-dur { font-family: var(--ff-mono); font-size: 9.5px; color: #fff; opacity: .9; white-space: nowrap; }
-.tl-foot { font-family: var(--ff-mono); font-size: 10.5px; color: var(--tx-3); margin-top: 12px; text-align: center; }
+.at-costnum { font-family: var(--ff-mono); color: var(--tx-0); }
+.ag-track { position: relative; height: 16px; background: var(--bg-2); border-radius: 4px; overflow: hidden; }
+.ag-bar { position: absolute; top: 0; height: 100%; border-radius: 4px; min-width: 3px; transition: left .4s, width .4s; }
 
 /* ============================================================
    TASK NOTIFICATION + SYSMETA
@@ -924,7 +1045,59 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .loading-row { display: flex; flex-direction: column; gap: 12px; padding: 28px 40px; max-width: 880px; margin: 0 auto; }
 .loading-row .skeleton { height: 64px; }
 
+/* ============================================================
+   MOBILE
+   ============================================================ */
+.sidebar-backdrop { display: none; }
+
 @media (max-width: 820px) {
-  .app { grid-template-columns: 0 1fr; }
-  .agents-view { grid-template-columns: 240px 1fr; }
+  /* The sidebar column collapses and the sidebar becomes an overlay drawer:
+     the toolbar button toggles it, tapping the backdrop (or picking a
+     session) closes it. */
+  /* The fixed-position sidebar leaves the grid flow, so main becomes the
+     only in-flow item and gets the single full-width track. */
+  .app, .app.no-sidebar { grid-template-columns: 1fr; }
+  .sidebar { position: fixed; top: 0; left: 0; bottom: 0; width: min(84vw, 320px); z-index: 60; box-shadow: 24px 0 60px rgb(0 0 0 / .3); }
+  .sidebar-resize { display: none; }
+  .sidebar-backdrop { display: block; position: fixed; inset: 0; background: rgb(0 0 0 / .45); z-index: 55; }
+
+  /* Agents view: tree rail stacks above the detail pane. */
+  .agents-view { grid-template-columns: 1fr; grid-template-rows: minmax(0, 38vh) minmax(0, 1fr); }
+  .tree-rail { border-right: none; border-bottom: 1px solid var(--line); }
+
+  /* Stats panels stack in one column. */
+  .stats-grid { grid-template-columns: 1fr; }
+  .panel.span-2 { grid-column: span 1; }
+}
+
+@media (max-width: 700px) {
+  .toolbar { gap: 6px; padding: 0 10px; }
+  .viewtab { padding: 6px 10px; gap: 0; }
+  .viewtab > span:not(.viewtab-count) { display: none; } /* icons only */
+  .viewtab .viewtab-count { margin-left: 6px; }
+  .toolbar-meta { display: none; }
+  .searchbox.open input { width: min(40vw, 180px); }
+}
+
+@media (max-width: 640px) {
+  /* stats */
+  .stats-view { padding: 14px 12px 70px; }
+  .bigstats { grid-template-columns: repeat(2, 1fr); gap: 9px; }
+  .bigstat { padding: 13px 14px; }
+  .bigstat-val { font-size: 21px; }
+  .stats-grid { gap: 10px; }
+  .stats-col { gap: 10px; }
+  .panel-head { flex-wrap: wrap; column-gap: 10px; row-gap: 2px; }
+  .panel-body { padding: 13px 13px 14px; }
+  .tf-row { grid-template-columns: minmax(0, 45%) 1fr 34px; gap: 8px; }
+
+  /* conversation */
+  .conv-inner { padding: 16px 12px 70px; }
+  .msg { grid-template-columns: 58px 1fr; gap: 9px; }
+  .conv-head-stats { gap: 14px; }
+
+  /* agent detail */
+  .adetail { padding: 16px 12px 60px; }
+  .adetail-stats { grid-template-columns: repeat(2, 1fr); }
+  .loading-row { padding: 20px 14px; }
 }

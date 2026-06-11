@@ -43,7 +43,9 @@ export interface NormAgent {
   messages: NormMsg[];
   toolResults: Record<string, NormToolResult>;
   toolCounts: Record<string, number>;
+  toolUseMsgUuid: Record<string, string>;
   usage: { input: number; output: number; cw: number; cr: number; cost: number };
+  peakContext: number;
   result: string;
   persona: { content: string; resolvedPath: string } | null;
 }
@@ -63,6 +65,7 @@ export interface NormStats {
   modelMix: Record<ModelFamily, number>;
   toolFreq: Record<string, number>;
   cacheRatio: number;
+  modelStats: { family: ModelFamily; tokens: number; cost: number }[];
 }
 
 export interface NormTrace {
@@ -71,7 +74,9 @@ export interface NormTrace {
     messages: NormMsg[];
     toolResults: Record<string, NormToolResult>;
     toolCounts: Record<string, number>;
+    toolUseMsgUuid: Record<string, string>;
     usage: { input: number; output: number; cw: number; cr: number; cost: number };
+    peakContext: number;
   };
   agents: NormAgent[];
   stats: NormStats;
@@ -96,9 +101,12 @@ function extractText(content: ContentBlock["content"] | string | undefined): str
   return "";
 }
 
-function toolResultIsError(content: ContentBlock["content"] | string | undefined): boolean {
-  const t = extractText(content);
-  return t.includes("error") && t.toLowerCase().startsWith("error");
+function toolResultIsError(block: ContentBlock): boolean {
+  // Prefer Anthropic's explicit is_error flag; fall back to a text heuristic
+  // only for older records that didn't carry it (avoids over-flagging normal
+  // output that merely starts with "error").
+  if (typeof block.is_error === "boolean") return block.is_error;
+  return extractText(block.content).toLowerCase().startsWith("error");
 }
 
 interface MergedAssistant {
@@ -169,18 +177,22 @@ function normalizeRecords(records: TraceRecord[]): {
   messages: NormMsg[];
   toolResults: Record<string, NormToolResult>;
   toolCounts: Record<string, number>;
+  toolUseMsgUuid: Record<string, string>;
   usage: { input: number; output: number; cw: number; cr: number; cost: number };
   modelsSeen: Set<string>;
   startedAt: string;
   endedAt: string;
   spawnByToolUseId: Record<string, { type: string; description: string; model?: string }>;
+  peakContext: number;
 } {
   const merged = buildMergedAssistants(records);
   const toolResults: Record<string, NormToolResult> = {};
   const toolCounts: Record<string, number> = {};
+  const toolUseMsgUuid: Record<string, string> = {};
   const messages: NormMsg[] = [];
   const usage = EMPTY_USAGE();
   const modelsSeen = new Set<string>();
+  let peakContext = 0;
   const spawnByToolUseId: Record<string, { type: string; description: string; model?: string }> = {};
 
   let startedAt = "";
@@ -201,7 +213,7 @@ function normalizeRecords(records: TraceRecord[]): {
       let hasText = false;
       for (const b of blocks) {
         if (b.type === "tool_result" && b.tool_use_id) {
-          toolResults[b.tool_use_id] = { content: b.content || "", is_error: toolResultIsError(b.content) };
+          toolResults[b.tool_use_id] = { content: b.content || "", is_error: toolResultIsError(b) };
           hasToolResult = true;
         }
         if (b.type === "text" && b.text) hasText = true;
@@ -244,6 +256,10 @@ function normalizeRecords(records: TraceRecord[]): {
       if (entry.model) modelsSeen.add(entry.model);
       const u = usageToNormalized(entry.model, entry.usage);
       addUsage(usage, u);
+      // Context = the prompt size sent to the model on this call (fresh input +
+      // cache read + cache write). The peak is how full the window got.
+      const ctx = u.input + u.cw + u.cr;
+      if (ctx > peakContext) peakContext = ctx;
 
       for (const block of entry.content) {
         if (block.type === "tool_use" && block.name && block.id) {
@@ -252,6 +268,9 @@ function normalizeRecords(records: TraceRecord[]): {
             const inp = block.input || {};
             spawnByToolUseId[block.id] = { type: inp.subagent_type || "agent", description: inp.description || "", model: inp.model };
           }
+        }
+        if (block.type === "tool_use" && block.id) {
+          toolUseMsgUuid[block.id] = rec.uuid || id;
         }
       }
 
@@ -269,7 +288,7 @@ function normalizeRecords(records: TraceRecord[]): {
     }
   }
 
-  return { messages, toolResults, toolCounts, usage, modelsSeen, startedAt, endedAt, spawnByToolUseId };
+  return { messages, toolResults, toolCounts, toolUseMsgUuid, usage, modelsSeen, startedAt, endedAt, spawnByToolUseId, peakContext };
 }
 
 function readMeta(meta: any): { agentType?: string; description?: string; prompt?: string; model?: string; toolUseId?: string } {
@@ -381,6 +400,8 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
         messages,
         toolResults: aNorm.toolResults,
         toolCounts: aNorm.toolCounts,
+        toolUseMsgUuid: aNorm.toolUseMsgUuid,
+        peakContext: aNorm.peakContext,
         usage: aNorm.usage,
         result: result || lastAssistTxt,
         persona: data?.persona || null,
@@ -395,17 +416,29 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
   addUsage(allTotals, mainNorm.usage);
   for (const a of agents) addUsage(allTotals, a.usage);
 
-  const modelMix: Record<ModelFamily, number> = { fable: 0, opus: 0, sonnet: 0, haiku: 0 };
-  for (const m of mainNorm.messages) {
-    if (m.role !== "assistant") continue;
-    modelMix[modelFamily(m.model)] += m.usage.input + m.usage.output + m.usage.cw + m.usage.cr;
-  }
-  for (const a of agents) {
-    for (const m of a.messages) {
+  const familyAcc: Record<ModelFamily, { tokens: number; cost: number }> = {
+    fable: { tokens: 0, cost: 0 }, opus: { tokens: 0, cost: 0 },
+    sonnet: { tokens: 0, cost: 0 }, haiku: { tokens: 0, cost: 0 },
+  };
+  const accModels = (msgs: NormMsg[]) => {
+    for (const m of msgs) {
       if (m.role !== "assistant") continue;
-      modelMix[modelFamily(m.model)] += m.usage.input + m.usage.output + m.usage.cw + m.usage.cr;
+      const fam = modelFamily(m.model);
+      familyAcc[fam].tokens += m.usage.input + m.usage.output + m.usage.cw + m.usage.cr;
+      familyAcc[fam].cost += m.usage.cost;
     }
-  }
+  };
+  accModels(mainNorm.messages);
+  for (const a of agents) accModels(a.messages);
+
+  const modelMix: Record<ModelFamily, number> = {
+    fable: familyAcc.fable.tokens, opus: familyAcc.opus.tokens,
+    sonnet: familyAcc.sonnet.tokens, haiku: familyAcc.haiku.tokens,
+  };
+  const modelStats = (Object.entries(familyAcc) as [ModelFamily, { tokens: number; cost: number }][])
+    .filter(([, v]) => v.tokens > 0)
+    .map(([family, v]) => ({ family, tokens: v.tokens, cost: v.cost }))
+    .sort((a, b) => b.cost - a.cost);
 
   const toolFreq: Record<string, number> = {};
   for (const [k, v] of Object.entries(mainNorm.toolCounts)) toolFreq[k] = (toolFreq[k] || 0) + v;
@@ -437,9 +470,11 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
       messages: mainNorm.messages,
       toolResults: mainNorm.toolResults,
       toolCounts: mainNorm.toolCounts,
+      toolUseMsgUuid: mainNorm.toolUseMsgUuid,
+      peakContext: mainNorm.peakContext,
       usage: mainNorm.usage,
     },
     agents,
-    stats: { totals: allTotals, modelMix, toolFreq, cacheRatio },
+    stats: { totals: allTotals, modelMix, toolFreq, cacheRatio, modelStats },
   };
 }

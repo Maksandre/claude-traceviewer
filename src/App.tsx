@@ -44,7 +44,10 @@ function App() {
   const [trace, setTrace] = useState<NormTrace | null>(null);
   const [loading, setLoading] = useState(false);
   const [view, setView] = useState<ViewKey>(initial.view);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  // On phones the sidebar is an overlay drawer (see the mobile CSS section),
+  // so it starts closed there instead of covering the content.
+  const isMobile = () => typeof window !== "undefined" && window.innerWidth <= 820;
+  const [sidebarOpen, setSidebarOpen] = useState(() => !isMobile());
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [refreshSpin, setRefreshSpin] = useState(0);
   const [lastUpdated, setLastUpdated] = useState<number | null>(null);
@@ -61,6 +64,10 @@ function App() {
     setTargetMsg(msg);
     setTargetBlock(block);
   }, []);
+  const openMessage = useCallback((uuid: string) => {
+    selectTarget(uuid, null);
+    setView("conversation");
+  }, [selectTarget]);
   const permalinkApi = useMemo(() => ({ selectTarget }), [selectTarget]);
   const [query, setQuery] = useState("");
   // Search runs when the user presses Enter in the Toolbar. We wrap the
@@ -134,7 +141,7 @@ function App() {
     return data.map((it: any) =>
       typeof it === "string"
         ? { name: it, sessionCount: 0, mtime: 0 }
-        : { name: String(it?.name || ""), sessionCount: Number(it?.sessionCount || 0), mtime: Number(it?.mtime || 0) }
+        : { name: String(it?.name || ""), sessionCount: Number(it?.sessionCount || 0), mtime: Number(it?.mtime || 0), cwd: typeof it?.cwd === "string" ? it.cwd : undefined }
     ).filter((p) => p.name);
   };
 
@@ -272,7 +279,7 @@ function App() {
         onSelectProject={(p) => { setSelectedProject(p); setSelectedSession(null); setRecords([]); setTargetMsg(null); setTargetBlock(null); }}
         sessions={sessions}
         selectedSession={selectedSession}
-        onSelectSession={(s) => { setSelectedSession(s); setTargetMsg(null); setTargetBlock(null); }}
+        onSelectSession={(s) => { setSelectedSession(s); setTargetMsg(null); setTargetBlock(null); if (isMobile()) setSidebarOpen(false); }}
         onDeleteSession={(id) => {
           fetch(`/api/projects/${encodeURIComponent(selectedProject!)}/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
             .then(() => {
@@ -286,6 +293,7 @@ function App() {
         }}
         onResizeStart={startResize}
       />
+      {sidebarOpen ? <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} /> : null}
       <main className="main">
         <Toolbar
           view={view}
@@ -343,7 +351,7 @@ function App() {
               clearFocus={() => setFocusAgentId(null)}
             />
           ) : (
-            <div className="stats-scroll"><StatsView trace={trace} onOpenAgent={setDrawerId} /></div>
+            <div className="stats-scroll"><StatsView trace={trace} onOpenAgent={setDrawerId} onOpenMessage={openMessage} /></div>
           )}
         </div>
       </main>

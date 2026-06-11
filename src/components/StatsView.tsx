@@ -1,10 +1,15 @@
 import { useMemo, useState } from "react";
-import { agentColor, agentMeta, fmtClock, fmtCost, fmtDur, fmtTokens, modelColor, modelLabel, toolColor } from "../lib/format";
+import { agentColor, contextWindow, fmtClock, fmtCost, fmtDur, fmtDurShort, fmtTime, fmtTokens, fmtTokensShort, modelColor, modelLabel, toolColor } from "../lib/format";
 import { Icons, toolIcon } from "../lib/icons";
 import { Bar } from "../lib/md";
+import { ToolName } from "./ToolName";
 import type { NormTrace } from "../lib/normalize";
+import { analyzeCache } from "../lib/cacheInsights";
+import type { CacheInsights, CacheRebuild } from "../lib/cacheInsights";
+import { analyzeFriction } from "../lib/frictionInsights";
+import { analyzeTime } from "../lib/timeInsights";
 
-interface Props { trace: NormTrace; onOpenAgent: (id: string) => void; }
+interface Props { trace: NormTrace; onOpenAgent: (id: string) => void; onOpenMessage: (uuid: string) => void; }
 
 /* Extract a meaningful identity key from a tool_use input — the "what was this
    call against?" string we group by. file_path for file tools, command for
@@ -68,13 +73,14 @@ function buildToolUsage(trace: NormTrace): Record<string, Record<string, number>
   return out;
 }
 
-function BigStat({ icon: Ic, label, value, sub, color, accent }: {
+function BigStat({ icon: Ic, label, value, sub, color, accent, gaugePct }: {
   icon: (p?: { size?: number }) => React.ReactElement;
   label: string;
   value: React.ReactNode;
   sub?: string;
   color?: string;
   accent?: boolean;
+  gaugePct?: number;   // 0..1 — renders a thin fill bar (e.g. context used)
 }) {
   return (
     <div className={"bigstat " + (accent ? "accent" : "")}>
@@ -83,26 +89,166 @@ function BigStat({ icon: Ic, label, value, sub, color, accent }: {
         <span className="bigstat-label">{label}</span>
       </div>
       <div className="bigstat-val tnum" style={color ? { color } : undefined}>{value}</div>
+      {gaugePct != null ? (
+        <div className="bigstat-gauge"><span style={{ width: Math.min(Math.max(gaugePct, 0), 1) * 100 + "%", background: gaugePct >= 0.85 ? "var(--warn)" : (color || "var(--accent)") }} /></div>
+      ) : null}
       {sub ? <div className="bigstat-sub">{sub}</div> : null}
     </div>
   );
 }
 
-function Donut({ pct, color, label, center }: { pct: number; color: string; label: string; center: string }) {
-  const r = 42;
-  const c = 2 * Math.PI * r;
+function causeLabel(e: CacheRebuild): string {
+  if (e.cause === "idle") return `idle ${fmtDur(e.gapMs)} → cache expired (5-min TTL)`;
+  if (e.cause === "model-switch") return `model switch ${modelLabel(e.fromModel)} → ${modelLabel(e.toModel)}`;
+  return "prefix changed (system prompt/tools)";
+}
+
+function adviceFor(ins: CacheInsights): string | null {
+  const n = ins.events.length;
+  if (!n) return null;
+  const { idle, "model-switch": ms, "prefix-change": px } = ins.causeCounts;
+  if (idle >= ms && idle >= px) {
+    return `Mostly idle gaps (${idle} of ${n}). The cache expires after 5 minutes of inactivity, so the next message re-reads the whole conversation at 1.25× price. What to do: reply within ~5 minutes, or send your prompts together in one go.`;
+  }
+  if (ms >= px) {
+    return `Mostly model switches (${ms} of ${n}). The cache is per-model, so every switch re-reads the whole conversation from scratch. What to do: stick to one model for a session when you can.`;
+  }
+  return `Mostly prefix changes (${px} of ${n}) — usually automatic context compaction or a tool/skill loading mid-session, not something you set by hand. What to do: little, in most cases. If they happen often, the session is long enough to keep compacting — starting a fresh session for a new task stops you re-paying for the old context.`;
+}
+
+const IDLE_GAP_MS = 5 * 60_000;
+
+const MAX_TIMELINE_PTS = 400;
+
+function downsampleSeries(series: CacheInsights["series"]): CacheInsights["series"] {
+  if (series.length <= MAX_TIMELINE_PTS) return series;
+  // Keep every rebuild point (red dots must survive) plus an evenly-spaced
+  // sample of the rest, preserving chronological order.
+  const stride = Math.ceil(series.length / MAX_TIMELINE_PTS);
+  const out: CacheInsights["series"] = [];
+  for (let i = 0; i < series.length; i++) {
+    if (series[i].rebuild || i % stride === 0 || i === series.length - 1) out.push(series[i]);
+  }
+  return out;
+}
+
+function ContextTimeline({ ins, onOpenMessage, hoverUuid, onHover }: {
+  ins: CacheInsights;
+  onOpenMessage: (uuid: string) => void;
+  hoverUuid: string | null;
+  onHover: (uuid: string | null) => void;
+}) {
+  const pts = downsampleSeries(ins.series);
+  if (pts.length < 2) return <div className="cachep-empty">not enough calls to chart</div>;
+  // Build an x position per point: real elapsed time, but any gap over the idle
+  // threshold is clamped to a fixed slot so one long pause doesn't flatten the rest.
+  const times = pts.map(p => new Date(p.ts).getTime());
+  const SLOT = 1; // compressed gap width in arbitrary x-units
+  const xs: number[] = [0];
+  const breaks: { x: number; ms: number }[] = [];
+  for (let i = 1; i < pts.length; i++) {
+    const raw = Number.isNaN(times[i]) || Number.isNaN(times[i - 1]) ? 0 : times[i] - times[i - 1];
+    if (raw > IDLE_GAP_MS) { breaks.push({ x: xs[i - 1] + SLOT / 2, ms: raw }); xs.push(xs[i - 1] + SLOT); }
+    else xs.push(xs[i - 1] + Math.max(raw / 1000, 0.001)); // seconds as x-units
+  }
+  const maxX = xs[xs.length - 1] || 1;
+  const ctx = pts.map(p => p.read + p.written + p.fresh);
+  const maxY = Math.max(...ctx, 1);
+  const W = 100, H = 40;
+  const px = (x: number) => (x / maxX) * W;
+  const py = (y: number) => H - (y / maxY) * H;
+  const line = pts.map((_p, i) => `${px(xs[i]).toFixed(2)},${py(ctx[i]).toFixed(2)}`).join(" ");
+  const area = `0,${H} ${line} ${px(xs[xs.length - 1]).toFixed(2)},${H}`;
   return (
-    <div className="donut">
-      <svg viewBox="0 0 100 100" width="118" height="118">
-        <circle cx="50" cy="50" r={r} fill="none" stroke="var(--bg-3)" strokeWidth="11" />
-        <circle
-          cx="50" cy="50" r={r} fill="none" stroke={color} strokeWidth="11" strokeLinecap="round"
-          strokeDasharray={c} strokeDashoffset={c * (1 - pct)} transform="rotate(-90 50 50)"
-          style={{ transition: "stroke-dashoffset .8s cubic-bezier(.2,.8,.2,1)" }}
-        />
-        <text x="50" y="47" textAnchor="middle" className="donut-pct">{center}</text>
-        <text x="50" y="62" textAnchor="middle" className="donut-lbl">{label}</text>
+    <div className="ctl">
+      {breaks.length ? (
+        <div className="ctl-breakrow">
+          {breaks.map((b, i) => (
+            <span key={i} className="ctl-break-mark" style={{ left: px(b.x) + "%" }} data-tip={`idle ${fmtDur(b.ms)}`}>⏸</span>
+          ))}
+        </div>
+      ) : null}
+      <svg className="ctl-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`Context size across ${ins.series.length} calls`}>
+        <polygon className="ctl-area" points={area} />
+        <polyline className="ctl-line" points={line} />
+        {breaks.map((b, i) => <line key={"b" + i} className="ctl-break" x1={px(b.x)} x2={px(b.x)} y1={0} y2={H} />)}
+        {pts.map((p, i) => p.rebuild ? (
+          <g key={i}
+            className={"ctl-mark" + (p.msgUuid === hoverUuid ? " is-hover" : "")}
+            onClick={() => onOpenMessage(p.msgUuid)}
+            onMouseEnter={() => onHover(p.msgUuid)}
+            onMouseLeave={() => onHover(null)}
+          >
+            <rect className="ctl-mark-hit" x={px(xs[i]) - 1.6} y={0} width={3.2} height={H} />
+            <line className="ctl-mark-line" x1={px(xs[i])} x2={px(xs[i])} y1={0} y2={H} />
+            <title>cache rebuilt here — click to open</title>
+          </g>
+        ) : null)}
       </svg>
+      <div className="cachep-caption">Claude re-reads the whole conversation each call — this line is how big that re-read is. Red marks = the cache broke and was rebuilt (click to open). ⏸ marks = an idle pause, where that stretch of idle time is squeezed so it doesn't flatten the rest.</div>
+    </div>
+  );
+}
+
+function CachePanel({ trace, onOpenMessage }: { trace: NormTrace; onOpenMessage: (uuid: string) => void }) {
+  const { ins, advice } = useMemo(() => {
+    const ins = analyzeCache(trace);
+    return { ins, advice: adviceFor(ins) };
+  }, [trace]);
+  // Shared hover key links a timeline marker to its event row, both ways.
+  const [hoverUuid, setHoverUuid] = useState<string | null>(null);
+  return (
+    <div className="cachep">
+      <div className="cachep-chips">
+        <div className="cachep-chip">
+          <span className="cachep-k">saved by cache</span>
+          <b className="cachep-v ok tnum">{fmtCost(ins.savedUsd)}</b>
+        </div>
+        <div className="cachep-chip">
+          <span className="cachep-k">lost to rebuilds</span>
+          <b className={"cachep-v tnum " + (ins.wastedUsd >= 0.01 ? "warn" : "")}>{fmtCost(ins.wastedUsd)}</b>
+        </div>
+        <div className="cachep-chip">
+          <span className="cachep-k">rebuilds</span>
+          <b className="cachep-v tnum">{ins.events.length}</b>
+          {ins.events.length ? (
+            <span className="cachep-causes">
+              {[
+                ins.causeCounts.idle ? `${ins.causeCounts.idle} idle` : "",
+                ins.causeCounts["model-switch"] ? `${ins.causeCounts["model-switch"]} model` : "",
+                ins.causeCounts["prefix-change"] ? `${ins.causeCounts["prefix-change"]} prefix` : "",
+              ].filter(Boolean).join(" · ")}
+            </span>
+          ) : null}
+        </div>
+      </div>
+
+      <ContextTimeline ins={ins} onOpenMessage={onOpenMessage} hoverUuid={hoverUuid} onHover={setHoverUuid} />
+
+      {ins.events.length ? (
+        <div className="cachep-events">
+          {ins.events.map((e, i) => (
+            <button key={i} type="button"
+              className={"cachep-event cachep-event-btn" + (e.msgUuid === hoverUuid ? " is-hover" : "")}
+              onClick={() => onOpenMessage(e.msgUuid)}
+              onMouseEnter={() => setHoverUuid(e.msgUuid)}
+              onMouseLeave={() => setHoverUuid(null)}
+            >
+              <span className="cachep-ev-time tnum">{fmtTime(e.ts)}</span>
+              <span className="cachep-ev-cause">
+                {e.agent !== "main" ? <span className="cachep-ev-agent">{e.agent}</span> : null}
+                {causeLabel(e)}
+              </span>
+              <span className="cachep-ev-tok tnum">{fmtTokensShort(e.rebuiltTokens)} re-written</span>
+              <span className="cachep-ev-cost tnum">+{fmtCost(e.wastedUsd)}</span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="cachep-empty">no avoidable cache waste in this session</div>
+      )}
+
+      {advice ? <div className="cachep-advice">{advice}</div> : null}
     </div>
   );
 }
@@ -119,30 +265,87 @@ function Panel({ title, sub, children, span }: { title: string; sub?: string; ch
   );
 }
 
-function ModelMix({ mix }: { mix: Record<string, number> }) {
-  const entries = Object.entries(mix).filter(([, v]) => v > 0).sort((a, b) => b[1] - a[1]);
-  const total = entries.reduce((a, [, v]) => a + v, 0) || 1;
-  if (entries.length === 0) return <div className="empty">no model data</div>;
+function CostModels({ trace }: { trace: NormTrace }) {
+  const rows = trace.stats.modelStats;
+  const totalCost = rows.reduce((a, r) => a + r.cost, 0) || 1;
+  if (rows.length === 0) return <div className="empty">no model data</div>;
   return (
-    <div>
-      <div className="stackbar">
-        {entries.map(([fam, v]) => (
-          <div key={fam} className="stackseg"
-            style={{ width: (v / total * 100) + "%", background: `var(--${fam})` }}
-            title={`${fam} ${(v / total * 100).toFixed(1)}%`}
-          />
-        ))}
+    <div className="costmodels">
+      {rows.map(r => (
+        <div key={r.family} className="cm-row">
+          <span className="cm-dot" style={{ background: `var(--${r.family})` }} />
+          <span className="cm-name">{r.family[0].toUpperCase() + r.family.slice(1)}</span>
+          <span className="cm-bar"><span className="cm-bar-fill" style={{ width: (r.cost / totalCost * 100) + "%", background: `var(--${r.family})` }} /></span>
+          <span className="cm-tok tnum">{fmtTokens(r.tokens)}</span>
+          <span className="cm-cost tnum">{fmtCost(r.cost)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FrictionPanel({ trace, onOpenMessage }: { trace: NormTrace; onOpenMessage: (uuid: string) => void }) {
+  const fr = useMemo(() => analyzeFriction(trace), [trace]);
+  if (fr.errorTotal === 0 && fr.interruptions === 0) {
+    return <div className="cachep-empty">clean run — no errors or interruptions</div>;
+  }
+  return (
+    <div className="friction">
+      <div className="friction-summary">
+        <span className="friction-stat"><b className="tnum warn">{fr.errorTotal}</b> tool error{fr.errorTotal === 1 ? "" : "s"}</span>
+        <span className="friction-stat"><b className="tnum">{fr.interruptions}</b> interruption{fr.interruptions === 1 ? "" : "s"}</span>
       </div>
-      <div className="legend">
-        {entries.map(([fam, v]) => (
-          <div key={fam} className="legend-item">
-            <span className="legend-dot" style={{ background: `var(--${fam})` }} />
-            <span className="legend-name">{fam[0].toUpperCase() + fam.slice(1)}</span>
-            <span className="legend-val tnum">{(v / total * 100).toFixed(1)}%</span>
-            <span className="legend-sub tnum">{fmtTokens(v)} tok</span>
+      {fr.toolErrors.map(g => (
+        <div key={g.tool} className="friction-group">
+          <div className="friction-tool">{g.tool} <span className="friction-count tnum">×{g.count}</span></div>
+          {g.samples.map((s, i) => (
+            <button key={i} type="button" className="friction-sample" onClick={() => s.msgUuid && onOpenMessage(s.msgUuid)} disabled={!s.msgUuid}>
+              {s.snippet || "(no message)"}
+            </button>
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const SPAN_LABEL: Record<string, string> = { working: "agent working", waiting: "waiting on you", away: "idle / away" };
+
+function TimeSpentPanel({ trace, onOpenMessage }: { trace: NormTrace; onOpenMessage: (uuid: string) => void }) {
+  const ti = useMemo(() => analyzeTime(trace), [trace]);
+  // Chronological strip: each span grows by sqrt(duration) so a 17h idle is
+  // visibly the biggest yet doesn't crush the minutes-long work bursts.
+  const grow = (ms: number) => Math.sqrt(Math.max(ms, 1));
+  return (
+    <div className="timespent">
+      {ti.segments.length ? (
+        <>
+          <div className="ts-track">
+            {ti.segments.map((s, i) => (
+              <button
+                key={i}
+                type="button"
+                className={"ts-seg ts-" + s.kind}
+                style={{ flexGrow: grow(s.ms) }}
+                onClick={() => onOpenMessage(s.msgUuid)}
+                data-tip={`${SPAN_LABEL[s.kind]} · ${fmtDur(s.ms)}`}
+                aria-label={`${SPAN_LABEL[s.kind]} ${fmtDur(s.ms)} — jump`}
+              />
+            ))}
           </div>
-        ))}
+          <div className="ts-axis">
+            <span>{fmtClock(ti.startTs)}</span>
+            <span className="ts-axis-mid">chronological · width ∝ √time so idle doesn't swamp the rest · click a span to jump</span>
+            <span>{fmtClock(ti.endTs)}</span>
+          </div>
+        </>
+      ) : null}
+      <div className="ts-legend">
+        <span><span className="ts-dot ts-work" /> agent working <b className="tnum">{fmtDur(ti.workingMs)}</b></span>
+        <span><span className="ts-dot ts-wait" /> waiting on you <b className="tnum">{fmtDur(ti.waitingMs)}</b></span>
+        {ti.awayMs > 0 ? <span><span className="ts-dot ts-away" /> idle / away <b className="tnum">{fmtDur(ti.awayMs)}</b></span> : null}
       </div>
+      <div className="cachep-caption">"waiting on you" is short think-time between turns; "idle / away" is long dormant stretches (over 30 min — overnight or stepped out), kept separate so idle time isn't blamed on slow replies.</div>
     </div>
   );
 }
@@ -310,7 +513,7 @@ function ToolFreq({ freq, usage, projectDir }: {
                   </span>
                 ) : <span className="tf-caret tf-caret-placeholder" />}
                 <span className="tf-ic" style={{ color: col }}><TI size={13} /></span>
-                {name}
+                <ToolName name={name} />
               </span>
               <span><Bar pct={count / max} color={col} h={8} /></span>
               <span className="tf-count tnum">{count}</span>
@@ -323,146 +526,137 @@ function ToolFreq({ freq, usage, projectDir }: {
   );
 }
 
-function AgentTable({ trace, onOpen }: { trace: NormTrace; onOpen: (id: string) => void }) {
-  const rows = [
-    { id: null as string | null, name: "main agent", type: "orchestrator", model: trace.session.models[0] || "", u: trace.main.usage,
-      tools: Object.values(trace.main.toolCounts).reduce((a, b) => a + b, 0), dur: trace.session.durationMs, isMain: true },
-    ...trace.agents.map(a => ({
-      id: a.id, name: a.agentType, type: a.agentType, model: a.model, u: a.usage,
-      tools: Object.values(a.toolCounts).reduce((a2, b) => a2 + b, 0), dur: a.durationMs, isMain: false,
-    })),
-  ];
-  const maxCost = Math.max(...rows.map(r => r.u.cost), 0.001);
-  return (
-    <div className="atable">
-      <div className="atable-head">
-        <span>agent</span><span>model</span><span className="r">tokens</span><span className="r">tools</span><span className="r">time</span><span className="r">cost</span>
-      </div>
-      {rows.map((r, i) => {
-        const hue = r.isMain ? 18 : agentMeta(r.type).hue;
-        const col = `oklch(0.70 0.12 ${hue})`;
-        const totTok = r.u.input + r.u.output + r.u.cw + r.u.cr;
-        return (
-          <button
-            key={i}
-            className={"atable-row " + (r.isMain ? "is-main" : "")}
-            onClick={() => !r.isMain && r.id && onOpen(r.id)}
-            disabled={r.isMain}
-          >
-            <span className="at-name">
-              <span className="at-dot" style={{ background: col }} />
-              <span className="at-type">{r.name}</span>
-            </span>
-            <span className="at-model" style={{ color: modelColor(r.model) }}>{modelLabel(r.model)}</span>
-            <span className="r tnum at-tok">{fmtTokens(totTok)}</span>
-            <span className="r tnum">{r.tools}</span>
-            <span className="r tnum">{fmtDur(r.dur)}</span>
-            <span className="r at-cost">
-              <span className="at-costbar"><Bar pct={r.u.cost / maxCost} color="var(--accent)" h={5} track={false} /></span>
-              <span className="mono tnum">{fmtCost(r.u.cost)}</span>
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function Timeline({ trace }: { trace: NormTrace }) {
+/* Per-agent table merged with the execution timeline: the same agent list
+   carries cost/token columns AND a gantt bar positioned in session time, so
+   "this parallel wave cost $X" is readable per row instead of across two
+   panels. Rows sort by launch time — parallel waves group naturally. */
+function AgentGantt({ trace, onOpen }: { trace: NormTrace; onOpen: (id: string) => void }) {
   const start = trace.session.startedAt ? new Date(trace.session.startedAt).getTime() : 0;
   const end = trace.session.endedAt ? new Date(trace.session.endedAt).getTime() : start + 1;
   const span = Math.max(end - start, 1);
   const rows = [
-    { name: "main", isMain: true, s: 0, e: span, col: "var(--accent)", dur: span, desc: "main" },
+    { id: null as string | null, name: "main agent", model: trace.session.models[0] || "", u: trace.main.usage,
+      tools: Object.values(trace.main.toolCounts).reduce((a, b) => a + b, 0), dur: trace.session.durationMs,
+      s: 0, e: span, col: "var(--accent)", desc: "main conversation", isMain: true },
     ...trace.agents.map(a => ({
-      name: a.agentType.replace("qa:", ""),
-      isMain: false,
+      id: a.id as string | null, name: a.agentType, model: a.model, u: a.usage,
+      tools: Object.values(a.toolCounts).reduce((x, y) => x + y, 0), dur: a.durationMs,
       s: a.startedAt ? new Date(a.startedAt).getTime() - start : 0,
       e: a.endedAt ? new Date(a.endedAt).getTime() - start : 0,
-      col: agentColor(a.agentType),
-      dur: a.durationMs,
-      desc: a.description,
-    })),
+      col: agentColor(a.agentType), desc: a.description, isMain: false,
+    })).sort((x, y) => x.s - y.s),
   ];
-  const ticks = 5;
+  const ticks = 4;
+  // Axis labels round to whole minutes on long sessions — full "135m 20s"
+  // labels collide at the right edge of the track.
+  const tickLabel = (ms: number) => span > 600_000 ? Math.round(ms / 60_000) + "m" : fmtDur(ms);
   return (
-    <div className="timeline">
-      <div className="tl-axis">
-        {Array.from({ length: ticks + 1 }).map((_, i) => (
-          <span key={i} className="tl-tick" style={{ left: (i / ticks * 100) + "%" }}>{fmtDur(span * i / ticks)}</span>
-        ))}
+    <div className="agantt">
+      <div className="ag-head">
+        <span>agent</span><span>model</span><span className="r">tokens</span><span className="r">tools</span><span className="r">time</span><span className="r">cost</span>
+        <span className="ag-axis">
+          {Array.from({ length: ticks + 1 }).map((_, i) => (
+            <span key={i} className="ag-tick" style={{ left: (i / ticks * 100) + "%" }}>{tickLabel(span * i / ticks)}</span>
+          ))}
+        </span>
       </div>
-      <div className="tl-rows">
-        {rows.map((r, i) => (
-          <div className="tl-row" key={i}>
-            <span className="tl-label" style={{ color: r.col }}>{r.isMain ? "main" : r.name}</span>
-            <span className="tl-track">
-              <span
-                className="tl-bar"
-                style={{
-                  left: (r.s / span * 100) + "%",
-                  width: Math.max((r.e - r.s) / span * 100, 1.5) + "%",
-                  background: r.col,
-                  opacity: r.isMain ? 0.28 : 0.9,
-                }}
-                title={r.desc}
-              >
-                {!r.isMain ? <span className="tl-bar-dur">{fmtDur(r.dur)}</span> : null}
+      <div className="ag-body">
+        {rows.map((r, i) => {
+          const totTok = r.u.input + r.u.output + r.u.cw + r.u.cr;
+          return (
+            <button
+              key={i}
+              className={"ag-row " + (r.isMain ? "is-main" : "")}
+              onClick={() => !r.isMain && r.id && onOpen(r.id)}
+              disabled={r.isMain}
+            >
+              <span className="at-name">
+                <span className="at-dot" style={{ background: r.col }} />
+                <span className="at-type">{r.name}</span>
               </span>
-            </span>
-          </div>
-        ))}
+              <span className="at-model" style={{ color: modelColor(r.model) }}>
+                <span className="ag-full">{modelLabel(r.model)}</span>
+                <span className="ag-short">{modelLabel(r.model).split(" ")[0]}</span>
+              </span>
+              <span className="r tnum at-tok">
+                <span className="ag-full">{fmtTokens(totTok)}</span>
+                <span className="ag-short">{fmtTokensShort(totTok)}</span>
+              </span>
+              <span className="r tnum">{r.tools}</span>
+              <span className="r tnum">
+                <span className="ag-full">{fmtDur(r.dur)}</span>
+                <span className="ag-short">{fmtDurShort(r.dur)}</span>
+              </span>
+              <span className="r tnum at-costnum">{fmtCost(r.u.cost)}</span>
+              <span className="ag-track">
+                <span
+                  className="ag-bar"
+                  style={{
+                    left: (Math.max(r.s, 0) / span * 100) + "%",
+                    width: Math.max((r.e - r.s) / span * 100, 1) + "%",
+                    background: r.col,
+                    opacity: r.isMain ? 0.25 : 0.85,
+                  }}
+                  title={(r.desc ? r.desc + " · " : "") + fmtDur(r.dur)}
+                />
+              </span>
+            </button>
+          );
+        })}
       </div>
-      <div className="tl-foot">subagents launched in parallel · total wall-clock {fmtDur(span)}</div>
     </div>
   );
 }
 
-export function StatsView({ trace, onOpenAgent }: Props) {
+export function StatsView({ trace, onOpenAgent, onOpenMessage }: Props) {
   const s = trace.stats;
   const sess = trace.session;
   const totTok = useMemo(() => s.totals.input + s.totals.output + s.totals.cw + s.totals.cr, [s.totals]);
   const toolUsage = useMemo(() => buildToolUsage(trace), [trace]);
+  const ctxWindow = contextWindow(sess.models[0]);
+  const peakCtx = trace.main.peakContext;
+  const ctxPct = ctxWindow ? peakCtx / ctxWindow : 0;
   return (
     <div className="stats-view">
       <div className="bigstats">
         <BigStat icon={Icons.coins} label="TOTAL COST" value={fmtCost(s.totals.cost)} sub="all models" color="var(--accent)" accent />
         <BigStat icon={Icons.hash} label="TOTAL TOKENS" value={fmtTokens(totTok)} sub={`${fmtTokens(s.totals.output)} generated`} />
+        <BigStat icon={Icons.layers} label="PEAK CONTEXT" value={fmtTokens(peakCtx)} sub={`${Math.round(ctxPct * 100)}% of ${fmtTokens(ctxWindow)} · ${fmtTokens(Math.max(ctxWindow - peakCtx, 0))} left`} gaugePct={ctxPct} />
         <BigStat icon={Icons.clock} label="WALL CLOCK" value={fmtDur(sess.durationMs)} sub={fmtClock(sess.startedAt)} />
         <BigStat icon={Icons.agent} label="AGENTS" value={1 + trace.agents.length} sub={`1 main · ${trace.agents.length} sub`} color="var(--tool-agent)" />
         <BigStat icon={Icons.terminal} label="TOOL CALLS" value={Object.values(s.toolFreq).reduce((a, b) => a + b, 0)} sub={`${Object.keys(s.toolFreq).length} distinct`} />
       </div>
 
       <div className="stats-grid">
-        <Panel title="Cache efficiency" sub="reads vs fresh input">
-          <div className="cache-row">
-            <Donut pct={s.cacheRatio} color="var(--sonnet)" center={(s.cacheRatio * 100).toFixed(0) + "%"} label="cached" />
-            <div className="cache-legend">
-              <div className="cl-item"><span className="cl-dot" style={{ background: "var(--sonnet)" }} /><span>Cache read</span><b className="tnum">{fmtTokens(s.totals.cr)}</b></div>
-              <div className="cl-item"><span className="cl-dot" style={{ background: "var(--warn)" }} /><span>Cache write</span><b className="tnum">{fmtTokens(s.totals.cw)}</b></div>
-              <div className="cl-item"><span className="cl-dot" style={{ background: "var(--tx-2)" }} /><span>Fresh input</span><b className="tnum">{fmtTokens(s.totals.input)}</b></div>
-              <div className="cl-note">{(s.cacheRatio * 100).toFixed(1)}% of context served from cache — major cost saver on long runs.</div>
-            </div>
-          </div>
+        <Panel title="Prompt caching" span={2} sub={`${(s.cacheRatio * 100).toFixed(1)}% of input read from cache`}>
+          <CachePanel trace={trace} onOpenMessage={onOpenMessage} />
         </Panel>
 
-        <Panel title="Model mix" sub="by token volume">
-          <ModelMix mix={s.modelMix} />
+        <div className="stats-col">
+          <Panel title="Cost & models" sub="by spend">
+            <CostModels trace={trace} />
+          </Panel>
+          <Panel title="Where the time went" sub="working vs waiting · click a stall to jump">
+            <TimeSpentPanel trace={trace} onOpenMessage={onOpenMessage} />
+          </Panel>
+        </div>
+        <Panel title="Friction" sub="errors & interruptions">
+          <FrictionPanel trace={trace} onOpenMessage={onOpenMessage} />
         </Panel>
 
         <Panel title="Tool usage frequency" span={2} sub="click a tool for file/command breakdown">
           <ToolFreq freq={s.toolFreq} usage={toolUsage} projectDir={sess.project} />
         </Panel>
 
-        <Panel title="Per-agent breakdown" span={2} sub="click a row to inspect">
-          <AgentTable trace={trace} onOpen={onOpenAgent} />
+        <Panel
+          title="Agents"
+          span={2}
+          sub={trace.agents.length > 0
+            ? `${trace.agents.length} subagents · wall-clock ${fmtDur(sess.durationMs)} · click a row to inspect, hover a bar for its task`
+            : "no subagents launched"}
+        >
+          <AgentGantt trace={trace} onOpen={onOpenAgent} />
         </Panel>
-
-        {trace.agents.length > 0 ? (
-          <Panel title="Execution timeline" span={2} sub="parallel fan-out">
-            <Timeline trace={trace} />
-          </Panel>
-        ) : null}
       </div>
     </div>
   );
