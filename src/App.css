@@ -840,23 +840,36 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .friction-sample:hover:not(:disabled) { background: var(--bg-3); color: var(--tx-0); }
 .friction-sample:disabled { cursor: default; opacity: .7; }
 
-.timespent { display: flex; flex-direction: column; gap: 10px; }
-.ts-bar { display: flex; height: 22px; border-radius: var(--r-sm); overflow: hidden; background: var(--bg-3); }
-.ts-seg { height: 100%; }
-.ts-seg.ts-work { background: var(--tool-agent); }
-.ts-seg.ts-wait { background: var(--warn); }
-.ts-seg.ts-away { background: var(--bg-3); box-shadow: inset 0 0 0 1px var(--line-soft); }
+.timespent { display: flex; flex-direction: column; gap: 8px; }
+/* Chronological strip — flex row of spans; no overflow:hidden so the hover
+   tooltips can escape upward. End spans get the rounded corners. */
+.ts-track { display: flex; height: 24px; gap: 1px; background: var(--bg-3); border-radius: var(--r-sm); }
+.ts-seg { min-width: 2px; border: none; padding: 0; cursor: pointer; position: relative; flex-basis: 0; transition: filter .1s; }
+.ts-seg:first-child { border-radius: var(--r-sm) 0 0 var(--r-sm); }
+.ts-seg:last-child { border-radius: 0 var(--r-sm) var(--r-sm) 0; }
+.ts-seg:hover { filter: brightness(1.25); }
+.ts-seg.ts-working { background: var(--tool-agent); }
+.ts-seg.ts-waiting { background: var(--warn); }
+.ts-seg.ts-away { background: color-mix(in oklch, var(--tx-3) 45%, var(--bg-3)); }
+/* Instant tooltip on each span (no native-title delay). */
+.ts-seg::after {
+  content: attr(data-tip);
+  position: absolute; bottom: 130%; left: 50%; transform: translateX(-50%);
+  background: var(--bg-3); color: var(--tx-0);
+  font-family: var(--ff-mono); font-size: 10px;
+  padding: 3px 7px; border-radius: var(--r-sm); white-space: nowrap;
+  border: 1px solid var(--line-soft); box-shadow: 0 3px 10px rgb(0 0 0 / .3);
+  opacity: 0; pointer-events: none; transition: opacity .08s ease; z-index: 6;
+}
+.ts-seg:hover::after { opacity: 1; }
+.ts-axis { display: flex; justify-content: space-between; gap: 10px; font-family: var(--ff-mono); font-size: 9.5px; color: var(--tx-3); }
+.ts-axis-mid { color: var(--tx-3); opacity: .8; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ts-legend { display: flex; flex-wrap: wrap; gap: 8px 20px; font-size: 12px; color: var(--tx-2); }
 .ts-legend b { color: var(--tx-0); margin-left: 5px; }
 .ts-dot { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; vertical-align: middle; }
 .ts-dot.ts-work { background: var(--tool-agent); }
 .ts-dot.ts-wait { background: var(--warn); }
-.ts-dot.ts-away { background: var(--bg-3); box-shadow: inset 0 0 0 1px var(--line-soft); }
-.ts-stalls { display: flex; flex-direction: column; gap: 3px; }
-.ts-stall { display: flex; gap: 12px; align-items: baseline; border: none; background: var(--bg-2); border-radius: var(--r-sm); padding: 6px 10px; cursor: pointer; text-align: left; font: inherit; width: 100%; }
-.ts-stall:hover { background: var(--bg-3); }
-.ts-stall-dur { font-family: var(--ff-mono); font-weight: 600; color: var(--warn); min-width: 70px; }
-.ts-stall-lbl { font-size: 12px; color: var(--tx-2); }
+.ts-dot.ts-away { background: color-mix(in oklch, var(--tx-3) 45%, var(--bg-3)); }
 
 .toolfreq-total { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-3); margin-bottom: 14px; }
 .tf-group { border-radius: var(--r-sm); }

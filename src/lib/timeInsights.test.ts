@@ -61,11 +61,36 @@ describe("analyzeTime", () => {
     expect(ins.workingMs).toBe(20_000);                   // two 10s agent spans
   });
 
+  it("emits chronological segments, coalescing consecutive same-kind gaps", () => {
+    const ins = analyzeTime(trace([
+      msg({ atSec: 0, role: "user" }),
+      msg({ atSec: 10, role: "assistant" }),     // work 10s
+      msg({ atSec: 20, role: "assistant" }),     // work 10s (coalesces)
+      msg({ atSec: 80, role: "user" }),          // wait 60s
+      msg({ atSec: 90, role: "assistant" }),     // work 10s
+    ]));
+    expect(ins.segments.map(s => s.kind)).toEqual(["working", "waiting", "working"]);
+    expect(ins.segments[0].ms).toBe(20_000);     // two work gaps merged
+    expect(ins.segments[1].ms).toBe(60_000);
+  });
+
+  it("away spans appear as their own segment in time order", () => {
+    const ins = analyzeTime(trace([
+      msg({ atSec: 0, role: "user" }),
+      msg({ atSec: 10, role: "assistant", uuid: "a1" }),
+      msg({ atSec: 10 + 17 * 3600, role: "user" }),   // 17h away
+      msg({ atSec: 20 + 17 * 3600, role: "assistant" }),
+    ]));
+    expect(ins.segments.map(s => s.kind)).toEqual(["working", "away", "working"]);
+    expect(ins.segments[1].msgUuid).toBe("a1");      // jumps to turn before the pause
+  });
+
   it("empty / single-message traces yield zeros", () => {
     const z = analyzeTime(trace([]));
     expect(z.workingMs).toBe(0);
     expect(z.waitingMs).toBe(0);
     expect(z.awayMs).toBe(0);
+    expect(z.segments).toHaveLength(0);
     expect(analyzeTime(trace([msg({ atSec: 0, role: "user" })])).stalls).toHaveLength(0);
   });
 });

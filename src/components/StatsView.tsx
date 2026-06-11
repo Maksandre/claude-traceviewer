@@ -305,33 +305,43 @@ function FrictionPanel({ trace, onOpenMessage }: { trace: NormTrace; onOpenMessa
   );
 }
 
+const SPAN_LABEL: Record<string, string> = { working: "agent working", waiting: "waiting on you", away: "idle / away" };
+
 function TimeSpentPanel({ trace, onOpenMessage }: { trace: NormTrace; onOpenMessage: (uuid: string) => void }) {
   const ti = useMemo(() => analyzeTime(trace), [trace]);
-  const total = ti.workingMs + ti.waitingMs + ti.awayMs || 1;
-  const pct = (ms: number) => (ms / total) * 100;
+  // Chronological strip: each span grows by sqrt(duration) so a 17h idle is
+  // visibly the biggest yet doesn't crush the minutes-long work bursts.
+  const grow = (ms: number) => Math.sqrt(Math.max(ms, 1));
   return (
     <div className="timespent">
-      <div className="ts-bar">
-        <span className="ts-seg ts-work" style={{ width: pct(ti.workingMs) + "%" }} title={`working ${fmtDur(ti.workingMs)}`} />
-        <span className="ts-seg ts-wait" style={{ width: pct(ti.waitingMs) + "%" }} title={`waiting ${fmtDur(ti.waitingMs)}`} />
-        <span className="ts-seg ts-away" style={{ width: pct(ti.awayMs) + "%" }} title={`away ${fmtDur(ti.awayMs)}`} />
-      </div>
+      {ti.segments.length ? (
+        <>
+          <div className="ts-track">
+            {ti.segments.map((s, i) => (
+              <button
+                key={i}
+                type="button"
+                className={"ts-seg ts-" + s.kind}
+                style={{ flexGrow: grow(s.ms) }}
+                onClick={() => onOpenMessage(s.msgUuid)}
+                data-tip={`${SPAN_LABEL[s.kind]} · ${fmtDur(s.ms)}`}
+                aria-label={`${SPAN_LABEL[s.kind]} ${fmtDur(s.ms)} — jump`}
+              />
+            ))}
+          </div>
+          <div className="ts-axis">
+            <span>{fmtClock(ti.startTs)}</span>
+            <span className="ts-axis-mid">chronological · width ∝ √time so idle doesn't swamp the rest · click a span to jump</span>
+            <span>{fmtClock(ti.endTs)}</span>
+          </div>
+        </>
+      ) : null}
       <div className="ts-legend">
         <span><span className="ts-dot ts-work" /> agent working <b className="tnum">{fmtDur(ti.workingMs)}</b></span>
         <span><span className="ts-dot ts-wait" /> waiting on you <b className="tnum">{fmtDur(ti.waitingMs)}</b></span>
         {ti.awayMs > 0 ? <span><span className="ts-dot ts-away" /> idle / away <b className="tnum">{fmtDur(ti.awayMs)}</b></span> : null}
       </div>
-      <div className="cachep-caption">"waiting on you" is short think-time between turns; "idle / away" is long dormant stretches (over 30 min — overnight or stepped out), kept separate so the session's idle time isn't blamed on slow replies.</div>
-      {ti.stalls.length ? (
-        <div className="ts-stalls">
-          {ti.stalls.map((s, i) => (
-            <button key={i} type="button" className="ts-stall" onClick={() => onOpenMessage(s.msgUuid)}>
-              <span className="ts-stall-dur tnum">{fmtDur(s.ms)}</span>
-              <span className="ts-stall-lbl">paused after this turn → jump</span>
-            </button>
-          ))}
-        </div>
-      ) : null}
+      <div className="cachep-caption">"waiting on you" is short think-time between turns; "idle / away" is long dormant stretches (over 30 min — overnight or stepped out), kept separate so idle time isn't blamed on slow replies.</div>
     </div>
   );
 }

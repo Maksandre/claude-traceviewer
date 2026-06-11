@@ -17,11 +17,26 @@ export interface Stall {
   msgUuid: string;   // assistant message that finished before the wait
 }
 
+export type SpanKind = "working" | "waiting" | "away";
+
+/* One stretch of the session in chronological order. Consecutive gaps of the
+   same kind are coalesced into a single span (a "work burst", a pause, …).
+   `msgUuid` links to the message at the span's start so the strip can jump. */
+export interface TimeSegment {
+  kind: SpanKind;
+  ms: number;
+  startTs: string;
+  msgUuid: string;
+}
+
 export interface TimeInsights {
   workingMs: number;
   waitingMs: number;
   awayMs: number;
   stalls: Stall[];
+  segments: TimeSegment[];
+  startTs: string;
+  endTs: string;
 }
 
 const MAX_STALLS = 5;
@@ -33,19 +48,24 @@ function t(ms: string): number { return new Date(ms).getTime(); }
 
 export function analyzeTime(trace: NormTrace): TimeInsights {
   const msgs = trace.main.messages;
-  const ins: TimeInsights = { workingMs: 0, waitingMs: 0, awayMs: 0, stalls: [] };
+  const ins: TimeInsights = {
+    workingMs: 0, waitingMs: 0, awayMs: 0, stalls: [], segments: [],
+    startTs: msgs[0]?.ts || "", endTs: msgs[msgs.length - 1]?.ts || "",
+  };
   for (let i = 1; i < msgs.length; i++) {
     const prev = msgs[i - 1], cur = msgs[i];
     const a = t(prev.ts), b = t(cur.ts);
     if (Number.isNaN(a) || Number.isNaN(b) || b <= a) continue;
     const gap = b - a;
-    if (prev.role === "assistant" && cur.role === "user") {
-      if (gap > AWAY_MS) ins.awayMs += gap;
-      else ins.waitingMs += gap;
-      ins.stalls.push({ fromTs: prev.ts, toTs: cur.ts, ms: gap, msgUuid: prev.uuid });
-    } else {
-      ins.workingMs += gap;
-    }
+    const isWait = prev.role === "assistant" && cur.role === "user";
+    const kind: SpanKind = isWait ? (gap > AWAY_MS ? "away" : "waiting") : "working";
+    if (kind === "away") ins.awayMs += gap;
+    else if (kind === "waiting") ins.waitingMs += gap;
+    else ins.workingMs += gap;
+    if (isWait) ins.stalls.push({ fromTs: prev.ts, toTs: cur.ts, ms: gap, msgUuid: prev.uuid });
+    const last = ins.segments[ins.segments.length - 1];
+    if (last && last.kind === kind) last.ms += gap;
+    else ins.segments.push({ kind, ms: gap, startTs: prev.ts, msgUuid: prev.uuid });
   }
   ins.stalls.sort((x, y) => y.ms - x.ms);
   ins.stalls = ins.stalls.slice(0, MAX_STALLS);
