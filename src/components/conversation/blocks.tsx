@@ -761,7 +761,11 @@ export function UserGroup({ msgs, extraClass = "", permalinks = true }: { msgs: 
           {permalinks ? <MsgPermalink msgKey={first.uuid} /> : null}
         </div>
         <div className="msg-blocks" onClick={onBlocksClick}>
-          {cleanedMsgs.map((m, i) => <UserBody key={m.uuid || i} msg={m} />)}
+          {cleanedMsgs.map((m, i) => (
+            permalinks
+              ? <BlockAnchor key={m.uuid || i} msgKey={first.uuid} blockId={m.uuid || `part-${i}`} entityLabel="message"><UserBody msg={m} /></BlockAnchor>
+              : <UserBody key={m.uuid || i} msg={m} />
+          ))}
           {items.length ? <ImageGallery items={items} onOpen={setLightboxIx} /> : null}
         </div>
       </div>
