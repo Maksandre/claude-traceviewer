@@ -52,7 +52,7 @@ export function MsgPermalink({ msgKey }: { msgKey: string }) {
     e.stopPropagation();
     api?.selectTarget(msgKey, null);
     const msg = (e.currentTarget as HTMLElement).closest(".msg") as HTMLElement | null;
-    msg?.scrollIntoView({ behavior: "smooth", block: "start" });
+    msg?.scrollIntoView({ behavior: "auto", block: "start" });
     flashTarget(msg);
     copyPermalink({ msg: msgKey }, () => {
       setCopied(true);
@@ -83,7 +83,7 @@ export function BlockPermalink({ msgKey, blockId, label }: { msgKey: string; blo
     e.stopPropagation();
     api?.selectTarget(msgKey, blockId);
     const anchor = (e.currentTarget as HTMLElement).closest(".blk-anchor") as HTMLElement | null;
-    anchor?.scrollIntoView({ behavior: "smooth", block: "start" });
+    anchor?.scrollIntoView({ behavior: "auto", block: "start" });
     flashTarget(anchor);
     copyPermalink({ msg: msgKey, block: blockId }, () => {
       setCopied(true);

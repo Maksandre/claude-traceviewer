@@ -128,10 +128,15 @@ export function ConversationView({ trace, query, onOpenAgent, settings, live, ta
 
   const virtuosoRef = useRef<VirtuosoHandle>(null);
   const [atBottom, setAtBottom] = useState(true);
-  const showJump = !atBottom;
+  const [atTop, setAtTop] = useState(true);
 
   const scrollToBottom = useCallback(() => {
-    virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "smooth" });
+    virtuosoRef.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "auto" });
+  }, []);
+  const scrollToTop = useCallback(() => {
+    // scrollTo(top:0) hits the absolute top (including the header), unlike
+    // scrollToIndex(0) which stops at the first message.
+    virtuosoRef.current?.scrollTo({ top: 0, behavior: "auto" });
   }, []);
 
   // Walk every msg in every group so links targeting the 2nd part of a
@@ -176,7 +181,7 @@ export function ConversationView({ trace, query, onOpenAgent, settings, live, ta
       const sel = `[data-block-id="${CSS.escape(targetBlock!)}"]`;
       const el = root.querySelector<HTMLElement>(sel);
       if (el) {
-        el.scrollIntoView({ behavior: "smooth", block: "start" });
+        el.scrollIntoView({ behavior: "auto", block: "start" });
         el.classList.add("is-target");
         clearBlockT = window.setTimeout(() => el.classList.remove("is-target"), 2400);
         return () => { window.clearTimeout(clearBlockT); };
@@ -188,7 +193,7 @@ export function ConversationView({ trace, query, onOpenAgent, settings, live, ta
     // block element and finalize.
     const scrollT = window.setTimeout(() => {
       if (cancelled) return;
-      virtuosoRef.current?.scrollToIndex({ index: targetIndex, align: "start", behavior: "smooth" });
+      virtuosoRef.current?.scrollToIndex({ index: targetIndex, align: "start", behavior: "auto" });
       if (!wantsBlock) {
         setHighlightKey(groupKey);
         clearHighlightT = window.setTimeout(() => setHighlightKey(null), 2400);
@@ -201,7 +206,7 @@ export function ConversationView({ trace, query, onOpenAgent, settings, live, ta
         if (cancelled) return;
         const el = root.querySelector<HTMLElement>(sel);
         if (el) {
-          el.scrollIntoView({ behavior: "smooth", block: "start" });
+          el.scrollIntoView({ behavior: "auto", block: "start" });
           el.classList.add("is-target");
           clearBlockT = window.setTimeout(() => el.classList.remove("is-target"), 2400);
           return;
@@ -267,11 +272,21 @@ export function ConversationView({ trace, query, onOpenAgent, settings, live, ta
         components={{ Header, Footer }}
         atBottomStateChange={setAtBottom}
         atBottomThreshold={120}
+        atTopStateChange={setAtTop}
+        atTopThreshold={120}
         increaseViewportBy={{ top: 600, bottom: 1200 }}
         followOutput={live ? "smooth" : false}
       />
       <button
-        className={"jump-bottom " + (showJump ? "visible" : "")}
+        className={"jump-top " + (!atTop ? "visible" : "")}
+        onClick={scrollToTop}
+        aria-label="Jump to top"
+        title="Jump to top"
+      >
+        <Icons.caretUp size={16} />
+      </button>
+      <button
+        className={"jump-bottom " + (!atBottom ? "visible" : "")}
         onClick={scrollToBottom}
         aria-label="Jump to latest"
         title="Jump to latest"
