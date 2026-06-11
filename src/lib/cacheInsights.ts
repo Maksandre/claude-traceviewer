@@ -18,6 +18,7 @@ export interface CacheRebuild {
   wastedUsd: number;        // premium paid vs reading them from cache
   fromModel: string;
   toModel: string;
+  msgUuid: string;
 }
 
 export interface CacheCallPoint {
@@ -27,6 +28,7 @@ export interface CacheCallPoint {
   written: number;          // cache_creation tokens
   fresh: number;            // uncached input tokens
   rebuild: boolean;
+  msgUuid: string;
 }
 
 export interface CacheInsights {
@@ -71,12 +73,12 @@ function analyzeStream(msgs: NormMsg[], agent: string, ins: CacheInsights): void
           : prev.model && m.model && prev.model !== m.model ? "model-switch"
           : "prefix-change";
         const wastedUsd = rebuiltTokens * (rates.cw - rates.cr);
-        ins.events.push({ ts: m.ts, agent, cause, gapMs, rebuiltTokens, wastedUsd, fromModel: prev.model, toModel: m.model });
+        ins.events.push({ ts: m.ts, agent, cause, gapMs, rebuiltTokens, wastedUsd, fromModel: prev.model, toModel: m.model, msgUuid: m.uuid });
         ins.wastedUsd += wastedUsd;
         ins.causeCounts[cause]++;
       }
     }
-    ins.series.push({ ts: m.ts, agent, read: cr, written: cw, fresh: input, rebuild });
+    ins.series.push({ ts: m.ts, agent, read: cr, written: cw, fresh: input, rebuild, msgUuid: m.uuid });
     prev = m;
   }
 }

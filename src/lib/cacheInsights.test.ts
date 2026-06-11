@@ -57,6 +57,8 @@ describe("analyzeCache", () => {
     expect(ins.events[0].rebuiltTokens).toBe(111000); // min(cw, prev ctx 111200) = 111000
     expect(ins.wastedUsd).toBeGreaterThan(0);
     expect(ins.causeCounts.idle).toBe(1);
+    expect(ins.events[0].msgUuid).toBe("u" + (30 + 12 * 60));   // uuid is "u"+atSec in the fixture
+    expect(ins.series[2].msgUuid).toBe("u" + (30 + 12 * 60));
   });
 
   it("model switch without a gap → model-switch rebuild", () => {
