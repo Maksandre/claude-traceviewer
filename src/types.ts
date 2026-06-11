@@ -30,6 +30,8 @@ export interface ContentBlock {
   content?: string | ContentBlock[];
   source?: { type: string; media_type: string; data: string };
   caller?: { type: string };
+  /** Anthropic marks failed tool results with this; preferred over text heuristics. */
+  is_error?: boolean;
 }
 
 export interface TraceRecord {

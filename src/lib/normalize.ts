@@ -99,9 +99,12 @@ function extractText(content: ContentBlock["content"] | string | undefined): str
   return "";
 }
 
-function toolResultIsError(content: ContentBlock["content"] | string | undefined): boolean {
-  const t = extractText(content);
-  return t.toLowerCase().startsWith("error");
+function toolResultIsError(block: ContentBlock): boolean {
+  // Prefer Anthropic's explicit is_error flag; fall back to a text heuristic
+  // only for older records that didn't carry it (avoids over-flagging normal
+  // output that merely starts with "error").
+  if (typeof block.is_error === "boolean") return block.is_error;
+  return extractText(block.content).toLowerCase().startsWith("error");
 }
 
 interface MergedAssistant {
@@ -206,7 +209,7 @@ function normalizeRecords(records: TraceRecord[]): {
       let hasText = false;
       for (const b of blocks) {
         if (b.type === "tool_result" && b.tool_use_id) {
-          toolResults[b.tool_use_id] = { content: b.content || "", is_error: toolResultIsError(b.content) };
+          toolResults[b.tool_use_id] = { content: b.content || "", is_error: toolResultIsError(b) };
           hasToolResult = true;
         }
         if (b.type === "text" && b.text) hasText = true;
