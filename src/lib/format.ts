@@ -168,6 +168,17 @@ function lookupRates(model: string | undefined | null): PerTokenRates {
   return FAMILY_FALLBACK[modelFamily(model)];
 }
 
+/** Per-token cache pricing for a model: base input rate, cache-write rate
+ * (~1.25x input), cache-read rate (~0.1x input). Used by cacheInsights. */
+export function cacheRates(model: string | undefined | null): { input: number; cw: number; cr: number } {
+  const r = lookupRates(model);
+  return {
+    input: r.input_cost_per_token,
+    cw: r.cache_creation_input_token_cost ?? r.input_cost_per_token * 1.25,
+    cr: r.cache_read_input_token_cost ?? r.input_cost_per_token * 0.10,
+  };
+}
+
 export function costFor(model: string | undefined | null, u: { input: number; output: number; cw: number; cr: number }): number {
   const r = lookupRates(model);
   return (
