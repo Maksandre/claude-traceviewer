@@ -128,7 +128,12 @@ function downsampleSeries(series: CacheInsights["series"]): CacheInsights["serie
   return out;
 }
 
-function ContextTimeline({ ins, onOpenMessage }: { ins: CacheInsights; onOpenMessage: (uuid: string) => void }) {
+function ContextTimeline({ ins, onOpenMessage, hoverUuid, onHover }: {
+  ins: CacheInsights;
+  onOpenMessage: (uuid: string) => void;
+  hoverUuid: string | null;
+  onHover: (uuid: string | null) => void;
+}) {
   const pts = downsampleSeries(ins.series);
   if (pts.length < 2) return <div className="cachep-empty">not enough calls to chart</div>;
   // Build an x position per point: real elapsed time, but any gap over the idle
@@ -157,7 +162,12 @@ function ContextTimeline({ ins, onOpenMessage }: { ins: CacheInsights; onOpenMes
         <polyline className="ctl-line" points={line} />
         {breaks.map((b, i) => <line key={"b" + i} className="ctl-break" x1={px(b.x)} x2={px(b.x)} y1={0} y2={H} />)}
         {pts.map((p, i) => p.rebuild ? (
-          <g key={i} className="ctl-mark" onClick={() => onOpenMessage(p.msgUuid)}>
+          <g key={i}
+            className={"ctl-mark" + (p.msgUuid === hoverUuid ? " is-hover" : "")}
+            onClick={() => onOpenMessage(p.msgUuid)}
+            onMouseEnter={() => onHover(p.msgUuid)}
+            onMouseLeave={() => onHover(null)}
+          >
             <rect className="ctl-mark-hit" x={px(xs[i]) - 1.6} y={0} width={3.2} height={H} />
             <line className="ctl-mark-line" x1={px(xs[i])} x2={px(xs[i])} y1={0} y2={H} />
             <title>cache rebuilt here — click to open</title>
@@ -177,6 +187,8 @@ function CachePanel({ trace, onOpenMessage }: { trace: NormTrace; onOpenMessage:
     const ins = analyzeCache(trace);
     return { ins, advice: adviceFor(ins) };
   }, [trace]);
+  // Shared hover key links a timeline marker to its event row, both ways.
+  const [hoverUuid, setHoverUuid] = useState<string | null>(null);
   return (
     <div className="cachep">
       <div className="cachep-chips">
@@ -203,12 +215,17 @@ function CachePanel({ trace, onOpenMessage }: { trace: NormTrace; onOpenMessage:
         </div>
       </div>
 
-      <ContextTimeline ins={ins} onOpenMessage={onOpenMessage} />
+      <ContextTimeline ins={ins} onOpenMessage={onOpenMessage} hoverUuid={hoverUuid} onHover={setHoverUuid} />
 
       {ins.events.length ? (
         <div className="cachep-events">
           {ins.events.map((e, i) => (
-            <button key={i} type="button" className="cachep-event cachep-event-btn" onClick={() => onOpenMessage(e.msgUuid)}>
+            <button key={i} type="button"
+              className={"cachep-event cachep-event-btn" + (e.msgUuid === hoverUuid ? " is-hover" : "")}
+              onClick={() => onOpenMessage(e.msgUuid)}
+              onMouseEnter={() => setHoverUuid(e.msgUuid)}
+              onMouseLeave={() => setHoverUuid(null)}
+            >
               <span className="cachep-ev-time tnum">{fmtTime(e.ts)}</span>
               <span className="cachep-ev-cause">
                 {e.agent !== "main" ? <span className="cachep-ev-agent">{e.agent}</span> : null}
@@ -587,18 +604,16 @@ export function StatsView({ trace, onOpenAgent, onOpenMessage }: Props) {
       </div>
 
       <div className="stats-grid">
-        <Panel title="Prompt caching" sub={`${(s.cacheRatio * 100).toFixed(1)}% of input read from cache`}>
+        <Panel title="Prompt caching" span={2} sub={`${(s.cacheRatio * 100).toFixed(1)}% of input read from cache`}>
           <CachePanel trace={trace} onOpenMessage={onOpenMessage} />
         </Panel>
 
-        <div className="stats-col">
-          <Panel title="Cost & models" sub="by spend">
-            <CostModels trace={trace} />
-          </Panel>
-          <Panel title="Friction" sub="errors & interruptions">
-            <FrictionPanel trace={trace} onOpenMessage={onOpenMessage} />
-          </Panel>
-        </div>
+        <Panel title="Cost & models" sub="by spend">
+          <CostModels trace={trace} />
+        </Panel>
+        <Panel title="Friction" sub="errors & interruptions">
+          <FrictionPanel trace={trace} onOpenMessage={onOpenMessage} />
+        </Panel>
 
         <Panel title="Where the time went" span={2} sub="working vs waiting · click a stall to jump">
           <TimeSpentPanel trace={trace} onOpenMessage={onOpenMessage} />
