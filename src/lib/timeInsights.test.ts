@@ -15,7 +15,7 @@ function trace(main: NormMsg[]): NormTrace {
   const u = { input: 0, output: 0, cw: 0, cr: 0, cost: 0 };
   return {
     session: { project: "", attributionSkill: "", gitBranch: "", models: [], durationMs: 0, startedAt: "", endedAt: "" },
-    main: { messages: main, toolResults: {}, toolCounts: {}, usage: u, toolUseMsgUuid: {} },
+    main: { messages: main, toolResults: {}, toolCounts: {}, usage: u, toolUseMsgUuid: {}, peakContext: 0 },
     agents: [],
     stats: { totals: u, modelMix: { fable: 0, opus: 0, sonnet: 0, haiku: 0 }, toolFreq: {}, cacheRatio: 0, modelStats: [] },
   } as NormTrace;

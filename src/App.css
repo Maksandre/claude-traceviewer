@@ -270,6 +270,7 @@ button { font-family: inherit; }
 .conv-head-stats { display: flex; gap: 22px; }
 .chs { display: flex; flex-direction: column; align-items: flex-end; }
 .chs-v { font-family: var(--ff-mono); font-size: 19px; font-weight: 600; }
+.chs-sub { color: var(--tx-3); font-weight: 400; font-size: 14px; }
 .chs-l { font-size: 10.5px; color: var(--tx-3); text-transform: uppercase; letter-spacing: .06em; }
 
 .empty-state { display: grid; place-items: center; height: 100%; color: var(--tx-2); font-size: 14px; text-align: center; padding: 40px; }
@@ -751,7 +752,7 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
    STATS VIEW
    ============================================================ */
 .stats-view { max-width: 1100px; margin: 0 auto; padding: 26px 30px 80px; }
-.bigstats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 12px; margin-bottom: 14px; }
+.bigstats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 12px; margin-bottom: 14px; }
 @media (max-width: 980px) { .bigstats { grid-template-columns: repeat(3, 1fr); } }
 .bigstat { background: var(--bg-1); border: 1px solid var(--line-soft); border-radius: var(--r-lg); padding: 16px 17px; }
 .bigstat.accent { background: linear-gradient(160deg, var(--accent-soft), var(--bg-1)); border-color: var(--accent-line); }
@@ -760,6 +761,8 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .bigstat-label { font-family: var(--ff-mono); font-size: 10px; color: var(--tx-3); text-transform: uppercase; letter-spacing: .07em; font-weight: 600; }
 .bigstat-val { font-family: var(--ff-mono); font-size: 27px; font-weight: 600; letter-spacing: -.02em; line-height: 1; }
 .bigstat-sub { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-3); margin-top: 6px; }
+.bigstat-gauge { margin-top: 8px; height: 4px; border-radius: 99px; background: var(--bg-3); overflow: hidden; }
+.bigstat-gauge > span { display: block; height: 100%; border-radius: 99px; transition: width .3s ease; }
 
 /* align-items:start so a short panel (Cost & models) doesn't stretch tall to
    match its row neighbour (Friction) and reopen the empty-space problem. */

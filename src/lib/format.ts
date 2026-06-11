@@ -73,6 +73,13 @@ export function modelFamily(m?: string | null): ModelFamily {
   return "sonnet";
 }
 
+/* Context window (max input tokens) by model. Fable 5, Opus 4.6+, and
+   Sonnet 4.6 are 1M; Haiku is 200K. Once a session's per-call context nears
+   this, the harness compacts. */
+export function contextWindow(m?: string | null): number {
+  return modelFamily(m) === "haiku" ? 200_000 : 1_000_000;
+}
+
 export function modelLabel(m?: string | null): string {
   const fam = modelFamily(m);
   const cap = fam.charAt(0).toUpperCase() + fam.slice(1);

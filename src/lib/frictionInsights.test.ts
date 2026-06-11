@@ -24,6 +24,7 @@ function trace(opts: {
       toolCounts: opts.mainCounts ?? {},
       usage: u,
       toolUseMsgUuid: opts.mainMap ?? {},
+      peakContext: 0,
     },
     agents: [],
     stats: { totals: u, modelMix: { fable: 0, opus: 0, sonnet: 0, haiku: 0 }, toolFreq: {}, cacheRatio: 0, modelStats: [] },

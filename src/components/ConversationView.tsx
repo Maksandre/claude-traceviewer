@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 import type { NormAgent, NormTrace } from "../lib/normalize";
-import { fmtCost, fmtDur, modelColor, modelLabel } from "../lib/format";
+import { contextWindow, fmtCost, fmtDur, fmtTokens, modelColor, modelLabel } from "../lib/format";
 import { Icons } from "../lib/icons";
 import { useSearchHighlight } from "../lib/searchHighlight";
 import { ToolFilterStrip } from "./ToolFilterStrip";
@@ -64,6 +64,12 @@ function ConvHeader({ trace, toolFilter, onToggleTool, onClearTool }: {
           <span className="chs-v tnum">{totalTools}</span>
           <span className="chs-l">tool calls</span>
         </div>
+        {trace.main.peakContext > 0 ? (
+          <div className="chs" title="Largest context sent to the model; the harness compacts as this nears the window">
+            <span className="chs-v tnum">{fmtTokens(trace.main.peakContext)}<span className="chs-sub"> / {fmtTokens(contextWindow(s.models[0]))}</span></span>
+            <span className="chs-l">peak context</span>
+          </div>
+        ) : null}
       </div>
       {hasMainTools ? (
         <div className="conv-head-tools">

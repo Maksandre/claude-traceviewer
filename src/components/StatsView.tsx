@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { agentColor, fmtClock, fmtCost, fmtDur, fmtDurShort, fmtTime, fmtTokens, fmtTokensShort, modelColor, modelLabel, toolColor } from "../lib/format";
+import { agentColor, contextWindow, fmtClock, fmtCost, fmtDur, fmtDurShort, fmtTime, fmtTokens, fmtTokensShort, modelColor, modelLabel, toolColor } from "../lib/format";
 import { Icons, toolIcon } from "../lib/icons";
 import { Bar } from "../lib/md";
 import { ToolName } from "./ToolName";
@@ -73,13 +73,14 @@ function buildToolUsage(trace: NormTrace): Record<string, Record<string, number>
   return out;
 }
 
-function BigStat({ icon: Ic, label, value, sub, color, accent }: {
+function BigStat({ icon: Ic, label, value, sub, color, accent, gaugePct }: {
   icon: (p?: { size?: number }) => React.ReactElement;
   label: string;
   value: React.ReactNode;
   sub?: string;
   color?: string;
   accent?: boolean;
+  gaugePct?: number;   // 0..1 — renders a thin fill bar (e.g. context used)
 }) {
   return (
     <div className={"bigstat " + (accent ? "accent" : "")}>
@@ -88,6 +89,9 @@ function BigStat({ icon: Ic, label, value, sub, color, accent }: {
         <span className="bigstat-label">{label}</span>
       </div>
       <div className="bigstat-val tnum" style={color ? { color } : undefined}>{value}</div>
+      {gaugePct != null ? (
+        <div className="bigstat-gauge"><span style={{ width: Math.min(Math.max(gaugePct, 0), 1) * 100 + "%", background: gaugePct >= 0.85 ? "var(--warn)" : (color || "var(--accent)") }} /></div>
+      ) : null}
       {sub ? <div className="bigstat-sub">{sub}</div> : null}
     </div>
   );
@@ -609,11 +613,15 @@ export function StatsView({ trace, onOpenAgent, onOpenMessage }: Props) {
   const sess = trace.session;
   const totTok = useMemo(() => s.totals.input + s.totals.output + s.totals.cw + s.totals.cr, [s.totals]);
   const toolUsage = useMemo(() => buildToolUsage(trace), [trace]);
+  const ctxWindow = contextWindow(sess.models[0]);
+  const peakCtx = trace.main.peakContext;
+  const ctxPct = ctxWindow ? peakCtx / ctxWindow : 0;
   return (
     <div className="stats-view">
       <div className="bigstats">
         <BigStat icon={Icons.coins} label="TOTAL COST" value={fmtCost(s.totals.cost)} sub="all models" color="var(--accent)" accent />
         <BigStat icon={Icons.hash} label="TOTAL TOKENS" value={fmtTokens(totTok)} sub={`${fmtTokens(s.totals.output)} generated`} />
+        <BigStat icon={Icons.layers} label="PEAK CONTEXT" value={fmtTokens(peakCtx)} sub={`${Math.round(ctxPct * 100)}% of ${fmtTokens(ctxWindow)} · ${fmtTokens(Math.max(ctxWindow - peakCtx, 0))} left`} gaugePct={ctxPct} />
         <BigStat icon={Icons.clock} label="WALL CLOCK" value={fmtDur(sess.durationMs)} sub={fmtClock(sess.startedAt)} />
         <BigStat icon={Icons.agent} label="AGENTS" value={1 + trace.agents.length} sub={`1 main · ${trace.agents.length} sub`} color="var(--tool-agent)" />
         <BigStat icon={Icons.terminal} label="TOOL CALLS" value={Object.values(s.toolFreq).reduce((a, b) => a + b, 0)} sub={`${Object.keys(s.toolFreq).length} distinct`} />
