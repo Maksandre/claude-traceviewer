@@ -134,9 +134,12 @@ button { font-family: inherit; }
 .sidebar-resize { position: absolute; top: 0; right: 0; bottom: 0; width: 4px; cursor: col-resize; z-index: 5; background: transparent; transition: background .15s; }
 .sidebar-resize:hover, .sidebar-resize.active { background: var(--accent-line); }
 .brand { display: flex; align-items: center; gap: 11px; padding: 16px 18px; border-bottom: 1px solid var(--line-soft); }
-.brand-mark { width: 32px; height: 32px; border-radius: 9px; display: grid; place-items: center; color: #fff;
-  background: linear-gradient(140deg, var(--accent), oklch(0.6 0.13 calc(var(--accent-h) + 18)));
-  box-shadow: 0 2px 8px -2px var(--accent-line); flex-shrink: 0; }
+/* Bare logo, no box/outline. The art is black, so invert it in dark mode to
+   stay visible on the dark sidebar; light mode shows it as-is. scale() crops
+   the PNG's transparent padding so the cube reads larger. */
+.brand-mark { width: 48px; height: 48px; display: grid; place-items: center; flex-shrink: 0; overflow: hidden; }
+.brand-mark img { width: 100%; height: 100%; object-fit: contain; transform: scale(1.35); display: block; }
+[data-theme="dark"] .brand-mark img { filter: invert(1); }
 .brand-text { display: flex; flex-direction: column; line-height: 1.2; min-width: 0; }
 .brand-name { font-weight: 700; font-size: 14.5px; letter-spacing: -.01em; white-space: nowrap; }
 .brand-sub { font-size: 10.5px; color: var(--tx-3); }

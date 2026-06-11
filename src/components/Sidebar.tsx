@@ -181,10 +181,9 @@ export function Sidebar({
   return (
     <aside className="sidebar">
       <div className="brand">
-        <span className="brand-mark"><Icons.layers size={17} /></span>
+        <span className="brand-mark"><img src="/logo.png" alt="" /></span>
         <span className="brand-text">
           <span className="brand-name">Debrief</span>
-          <span className="brand-sub mono">claude-code</span>
         </span>
       </div>
 
