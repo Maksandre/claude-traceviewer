@@ -817,35 +817,35 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .bar { height: 6px; border-radius: 99px; overflow: hidden; width: 100%; }
 .bar > div { height: 100%; border-radius: 99px; transition: width .5s cubic-bezier(.2,.8,.2,1); }
 
-.atable { display: flex; flex-direction: column; }
-.atable-head, .atable-row { display: grid; grid-template-columns: 1.6fr 1fr .8fr .6fr .7fr 1.1fr; gap: 12px; align-items: center; }
-.atable-head { font-family: var(--ff-mono); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--tx-3); padding: 0 4px 10px; border-bottom: 1px solid var(--line); }
-.atable-head .r, .atable-row .r { text-align: right; justify-self: end; }
-.atable-row { padding: 11px 4px; border-bottom: 1px solid var(--line-soft); border-radius: 0; border-left: none; border-right: none; border-top: none; background: transparent; cursor: pointer; transition: .13s; text-align: left; }
-.atable-row:hover:not(:disabled) { background: var(--bg-2); }
-.atable-row:disabled { cursor: default; }
-.atable-row.is-main { background: var(--accent-soft); }
+/* Agents panel: per-agent table columns + execution-timeline track per row.
+   The track column takes half the width; data columns stay compact. On a
+   narrow panel the tokens/time cells swap to coarse values (4M, 11m). */
+.agantt { display: flex; flex-direction: column; container-type: inline-size; }
+.ag-head, .ag-row { display: grid; grid-template-columns: 1.15fr .7fr .55fr .35fr .55fr .6fr 3.9fr; gap: 10px; align-items: center; }
+.ag-short { display: none; }
+@container (max-width: 900px) {
+  .ag-full { display: none; }
+  .ag-short { display: inline; }
+}
+.ag-head { font-family: var(--ff-mono); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--tx-3); padding: 0 4px 10px; border-bottom: 1px solid var(--line); }
+.ag-head .r, .ag-row .r { text-align: right; justify-self: end; }
+.ag-axis { position: relative; height: 12px; align-self: end; }
+.ag-tick { position: absolute; transform: translateX(-50%); white-space: nowrap; text-transform: none; }
+.ag-tick:first-child { transform: none; }
+.ag-tick:last-child { transform: translateX(-100%); }
+.ag-body { display: flex; flex-direction: column; max-height: 480px; overflow-y: auto; }
+.ag-row { padding: 8px 4px; border: none; border-bottom: 1px solid var(--line-soft); border-radius: 0; background: transparent; cursor: pointer; transition: background .13s; text-align: left; color: inherit; font: inherit; }
+.ag-row:hover:not(:disabled) { background: var(--bg-2); }
+.ag-row:disabled { cursor: default; }
+.ag-row.is-main { background: var(--accent-soft); }
 .at-name { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .at-dot { width: 8px; height: 8px; border-radius: 99px; flex-shrink: 0; }
 .at-type { font-family: var(--ff-mono); font-size: 12.5px; font-weight: 500; color: var(--tx-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .at-model { font-family: var(--ff-mono); font-size: 11.5px; }
 .at-tok { color: var(--tx-1); font-family: var(--ff-mono); }
-.at-cost { display: flex; align-items: center; gap: 9px; min-width: 0; }
-.at-costbar { width: 54px; flex-shrink: 0; }
-.atable-row .r.at-cost { justify-content: flex-end; }
-
-.timeline { }
-.tl-axis { position: relative; height: 16px; margin-left: 90px; margin-bottom: 8px; }
-.tl-tick { position: absolute; transform: translateX(-50%); font-family: var(--ff-mono); font-size: 10px; color: var(--tx-3); }
-.tl-tick:first-child { transform: none; }
-.tl-tick:last-child { transform: translateX(-100%); }
-.tl-rows { display: flex; flex-direction: column; gap: 7px; }
-.tl-row { display: grid; grid-template-columns: 84px 1fr; gap: 6px; align-items: center; }
-.tl-label { font-family: var(--ff-mono); font-size: 11px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.tl-track { position: relative; height: 22px; background: var(--bg-2); border-radius: 5px; }
-.tl-bar { position: absolute; top: 0; height: 100%; border-radius: 5px; display: flex; align-items: center; padding: 0 7px; min-width: 3px; transition: .5s; }
-.tl-bar-dur { font-family: var(--ff-mono); font-size: 9.5px; color: #fff; opacity: .9; white-space: nowrap; }
-.tl-foot { font-family: var(--ff-mono); font-size: 10.5px; color: var(--tx-3); margin-top: 12px; text-align: center; }
+.at-costnum { font-family: var(--ff-mono); color: var(--tx-0); }
+.ag-track { position: relative; height: 16px; background: var(--bg-2); border-radius: 4px; overflow: hidden; }
+.ag-bar { position: absolute; top: 0; height: 100%; border-radius: 4px; min-width: 3px; transition: left .4s, width .4s; }
 
 /* ============================================================
    TASK NOTIFICATION + SYSMETA

@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { agentColor, agentMeta, fmtClock, fmtCost, fmtDur, fmtTokens, modelColor, modelLabel, toolColor } from "../lib/format";
+import { agentColor, fmtClock, fmtCost, fmtDur, fmtDurShort, fmtTokens, fmtTokensShort, modelColor, modelLabel, toolColor } from "../lib/format";
 import { Icons, toolIcon } from "../lib/icons";
 import { Bar } from "../lib/md";
 import { ToolName } from "./ToolName";
@@ -324,97 +324,84 @@ function ToolFreq({ freq, usage, projectDir }: {
   );
 }
 
-function AgentTable({ trace, onOpen }: { trace: NormTrace; onOpen: (id: string) => void }) {
-  const rows = [
-    { id: null as string | null, name: "main agent", type: "orchestrator", model: trace.session.models[0] || "", u: trace.main.usage,
-      tools: Object.values(trace.main.toolCounts).reduce((a, b) => a + b, 0), dur: trace.session.durationMs, isMain: true },
-    ...trace.agents.map(a => ({
-      id: a.id, name: a.agentType, type: a.agentType, model: a.model, u: a.usage,
-      tools: Object.values(a.toolCounts).reduce((a2, b) => a2 + b, 0), dur: a.durationMs, isMain: false,
-    })),
-  ];
-  const maxCost = Math.max(...rows.map(r => r.u.cost), 0.001);
-  return (
-    <div className="atable">
-      <div className="atable-head">
-        <span>agent</span><span>model</span><span className="r">tokens</span><span className="r">tools</span><span className="r">time</span><span className="r">cost</span>
-      </div>
-      {rows.map((r, i) => {
-        const hue = r.isMain ? 18 : agentMeta(r.type).hue;
-        const col = `oklch(0.70 0.12 ${hue})`;
-        const totTok = r.u.input + r.u.output + r.u.cw + r.u.cr;
-        return (
-          <button
-            key={i}
-            className={"atable-row " + (r.isMain ? "is-main" : "")}
-            onClick={() => !r.isMain && r.id && onOpen(r.id)}
-            disabled={r.isMain}
-          >
-            <span className="at-name">
-              <span className="at-dot" style={{ background: col }} />
-              <span className="at-type">{r.name}</span>
-            </span>
-            <span className="at-model" style={{ color: modelColor(r.model) }}>{modelLabel(r.model)}</span>
-            <span className="r tnum at-tok">{fmtTokens(totTok)}</span>
-            <span className="r tnum">{r.tools}</span>
-            <span className="r tnum">{fmtDur(r.dur)}</span>
-            <span className="r at-cost">
-              <span className="at-costbar"><Bar pct={r.u.cost / maxCost} color="var(--accent)" h={5} track={false} /></span>
-              <span className="mono tnum">{fmtCost(r.u.cost)}</span>
-            </span>
-          </button>
-        );
-      })}
-    </div>
-  );
-}
-
-function Timeline({ trace }: { trace: NormTrace }) {
+/* Per-agent table merged with the execution timeline: the same agent list
+   carries cost/token columns AND a gantt bar positioned in session time, so
+   "this parallel wave cost $X" is readable per row instead of across two
+   panels. Rows sort by launch time — parallel waves group naturally. */
+function AgentGantt({ trace, onOpen }: { trace: NormTrace; onOpen: (id: string) => void }) {
   const start = trace.session.startedAt ? new Date(trace.session.startedAt).getTime() : 0;
   const end = trace.session.endedAt ? new Date(trace.session.endedAt).getTime() : start + 1;
   const span = Math.max(end - start, 1);
   const rows = [
-    { name: "main", isMain: true, s: 0, e: span, col: "var(--accent)", dur: span, desc: "main" },
+    { id: null as string | null, name: "main agent", model: trace.session.models[0] || "", u: trace.main.usage,
+      tools: Object.values(trace.main.toolCounts).reduce((a, b) => a + b, 0), dur: trace.session.durationMs,
+      s: 0, e: span, col: "var(--accent)", desc: "main conversation", isMain: true },
     ...trace.agents.map(a => ({
-      name: a.agentType.replace("qa:", ""),
-      isMain: false,
+      id: a.id as string | null, name: a.agentType, model: a.model, u: a.usage,
+      tools: Object.values(a.toolCounts).reduce((x, y) => x + y, 0), dur: a.durationMs,
       s: a.startedAt ? new Date(a.startedAt).getTime() - start : 0,
       e: a.endedAt ? new Date(a.endedAt).getTime() - start : 0,
-      col: agentColor(a.agentType),
-      dur: a.durationMs,
-      desc: a.description,
-    })),
+      col: agentColor(a.agentType), desc: a.description, isMain: false,
+    })).sort((x, y) => x.s - y.s),
   ];
-  const ticks = 5;
+  const ticks = 4;
+  // Axis labels round to whole minutes on long sessions — full "135m 20s"
+  // labels collide at the right edge of the track.
+  const tickLabel = (ms: number) => span > 600_000 ? Math.round(ms / 60_000) + "m" : fmtDur(ms);
   return (
-    <div className="timeline">
-      <div className="tl-axis">
-        {Array.from({ length: ticks + 1 }).map((_, i) => (
-          <span key={i} className="tl-tick" style={{ left: (i / ticks * 100) + "%" }}>{fmtDur(span * i / ticks)}</span>
-        ))}
+    <div className="agantt">
+      <div className="ag-head">
+        <span>agent</span><span>model</span><span className="r">tokens</span><span className="r">tools</span><span className="r">time</span><span className="r">cost</span>
+        <span className="ag-axis">
+          {Array.from({ length: ticks + 1 }).map((_, i) => (
+            <span key={i} className="ag-tick" style={{ left: (i / ticks * 100) + "%" }}>{tickLabel(span * i / ticks)}</span>
+          ))}
+        </span>
       </div>
-      <div className="tl-rows">
-        {rows.map((r, i) => (
-          <div className="tl-row" key={i}>
-            <span className="tl-label" style={{ color: r.col }}>{r.isMain ? "main" : r.name}</span>
-            <span className="tl-track">
-              <span
-                className="tl-bar"
-                style={{
-                  left: (r.s / span * 100) + "%",
-                  width: Math.max((r.e - r.s) / span * 100, 1.5) + "%",
-                  background: r.col,
-                  opacity: r.isMain ? 0.28 : 0.9,
-                }}
-                title={r.desc}
-              >
-                {!r.isMain ? <span className="tl-bar-dur">{fmtDur(r.dur)}</span> : null}
+      <div className="ag-body">
+        {rows.map((r, i) => {
+          const totTok = r.u.input + r.u.output + r.u.cw + r.u.cr;
+          return (
+            <button
+              key={i}
+              className={"ag-row " + (r.isMain ? "is-main" : "")}
+              onClick={() => !r.isMain && r.id && onOpen(r.id)}
+              disabled={r.isMain}
+            >
+              <span className="at-name">
+                <span className="at-dot" style={{ background: r.col }} />
+                <span className="at-type">{r.name}</span>
               </span>
-            </span>
-          </div>
-        ))}
+              <span className="at-model" style={{ color: modelColor(r.model) }}>
+                <span className="ag-full">{modelLabel(r.model)}</span>
+                <span className="ag-short">{modelLabel(r.model).split(" ")[0]}</span>
+              </span>
+              <span className="r tnum at-tok">
+                <span className="ag-full">{fmtTokens(totTok)}</span>
+                <span className="ag-short">{fmtTokensShort(totTok)}</span>
+              </span>
+              <span className="r tnum">{r.tools}</span>
+              <span className="r tnum">
+                <span className="ag-full">{fmtDur(r.dur)}</span>
+                <span className="ag-short">{fmtDurShort(r.dur)}</span>
+              </span>
+              <span className="r tnum at-costnum">{fmtCost(r.u.cost)}</span>
+              <span className="ag-track">
+                <span
+                  className="ag-bar"
+                  style={{
+                    left: (Math.max(r.s, 0) / span * 100) + "%",
+                    width: Math.max((r.e - r.s) / span * 100, 1) + "%",
+                    background: r.col,
+                    opacity: r.isMain ? 0.25 : 0.85,
+                  }}
+                  title={(r.desc ? r.desc + " · " : "") + fmtDur(r.dur)}
+                />
+              </span>
+            </button>
+          );
+        })}
       </div>
-      <div className="tl-foot">subagents launched in parallel · total wall-clock {fmtDur(span)}</div>
     </div>
   );
 }
@@ -455,15 +442,15 @@ export function StatsView({ trace, onOpenAgent }: Props) {
           <ToolFreq freq={s.toolFreq} usage={toolUsage} projectDir={sess.project} />
         </Panel>
 
-        <Panel title="Per-agent breakdown" span={2} sub="click a row to inspect">
-          <AgentTable trace={trace} onOpen={onOpenAgent} />
+        <Panel
+          title="Agents"
+          span={2}
+          sub={trace.agents.length > 0
+            ? `${trace.agents.length} subagents · wall-clock ${fmtDur(sess.durationMs)} · click a row to inspect, hover a bar for its task`
+            : "no subagents launched"}
+        >
+          <AgentGantt trace={trace} onOpen={onOpenAgent} />
         </Panel>
-
-        {trace.agents.length > 0 ? (
-          <Panel title="Execution timeline" span={2} sub="parallel fan-out">
-            <Timeline trace={trace} />
-          </Panel>
-        ) : null}
       </div>
     </div>
   );

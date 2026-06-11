@@ -9,6 +9,22 @@ export function fmtTokensFull(n: number | null | undefined): string {
   return (n || 0).toLocaleString("en-US");
 }
 
+/** Coarse token count for tight layouts: 4.02M → "4M", 777k → "0.8M", 25k → "25k". */
+export function fmtTokensShort(n: number | null | undefined): string {
+  if (n == null) return "0";
+  if (n >= 950_000) return Math.round(n / 1e6) + "M";
+  if (n >= 100_000) return (n / 1e6).toFixed(1) + "M";
+  if (n >= 1_000) return Math.round(n / 1e3) + "k";
+  return String(n);
+}
+
+/** Coarse duration for tight layouts: 10m 47s → "11m", 39s → "39s". */
+export function fmtDurShort(ms: number | null | undefined): string {
+  if (ms == null) return "—";
+  if (ms >= 60_000) return Math.round(ms / 60_000) + "m";
+  return Math.round(ms / 1000) + "s";
+}
+
 export function fmtCost(n: number | null | undefined): string {
   if (n == null) return "$0";
   if (n >= 1) return "$" + n.toFixed(2);
