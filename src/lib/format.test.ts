@@ -6,7 +6,7 @@ describe("cacheRates", () => {
     const r = cacheRates("claude-sonnet-4-6");
     expect(r.input).toBeGreaterThan(0);
     expect(r.cw).toBeGreaterThan(r.input);        // write premium
-    expect(r.cr).toBeLessThan(r.input * 0.2);     // read discount
+    expect(r.cr).toBeCloseTo(r.input * 0.10, 10);  // read discount
   });
 
   it("falls back for unknown models", () => {
