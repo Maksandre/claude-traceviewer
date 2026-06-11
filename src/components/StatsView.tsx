@@ -157,6 +157,13 @@ function ContextTimeline({ ins, onOpenMessage, hoverUuid, onHover }: {
   const area = `0,${H} ${line} ${px(xs[xs.length - 1]).toFixed(2)},${H}`;
   return (
     <div className="ctl">
+      {breaks.length ? (
+        <div className="ctl-breakrow">
+          {breaks.map((b, i) => (
+            <span key={i} className="ctl-break-mark" style={{ left: px(b.x) + "%" }} title={`idle pause · ${fmtDur(b.ms)}`}>⏸</span>
+          ))}
+        </div>
+      ) : null}
       <svg className="ctl-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`Context size across ${ins.series.length} calls`}>
         <polygon className="ctl-area" points={area} />
         <polyline className="ctl-line" points={line} />
@@ -174,10 +181,7 @@ function ContextTimeline({ ins, onOpenMessage, hoverUuid, onHover }: {
           </g>
         ) : null)}
       </svg>
-      <div className="ctl-breaks">
-        {breaks.map((b, i) => <span key={i} className="ctl-break-lbl">⏸ {fmtDur(b.ms)} idle</span>)}
-      </div>
-      <div className="cachep-caption">Claude re-reads the whole conversation each call — this line is how big that re-read is; red marks are where the cache broke and was rebuilt (click to open).</div>
+      <div className="cachep-caption">Claude re-reads the whole conversation each call — this line is how big that re-read is. Red marks = the cache broke and was rebuilt (click to open). ⏸ marks = an idle pause, where that stretch of idle time is squeezed so it doesn't flatten the rest.</div>
     </div>
   );
 }
@@ -608,15 +612,16 @@ export function StatsView({ trace, onOpenAgent, onOpenMessage }: Props) {
           <CachePanel trace={trace} onOpenMessage={onOpenMessage} />
         </Panel>
 
-        <Panel title="Cost & models" sub="by spend">
-          <CostModels trace={trace} />
-        </Panel>
+        <div className="stats-col">
+          <Panel title="Cost & models" sub="by spend">
+            <CostModels trace={trace} />
+          </Panel>
+          <Panel title="Where the time went" sub="working vs waiting · click a stall to jump">
+            <TimeSpentPanel trace={trace} onOpenMessage={onOpenMessage} />
+          </Panel>
+        </div>
         <Panel title="Friction" sub="errors & interruptions">
           <FrictionPanel trace={trace} onOpenMessage={onOpenMessage} />
-        </Panel>
-
-        <Panel title="Where the time went" span={2} sub="working vs waiting · click a stall to jump">
-          <TimeSpentPanel trace={trace} onOpenMessage={onOpenMessage} />
         </Panel>
 
         <Panel title="Tool usage frequency" span={2} sub="click a tool for file/command breakdown">
