@@ -612,10 +612,40 @@ function Lightbox({ items, index, onClose, onIndex }: { items: ImgItem[]; index:
           <div className="lightbox-count mono">{index + 1} / {items.length}</div>
         </>
       ) : null}
-      <img className="lightbox-img" src={it.src} alt={it.alt} onClick={(e) => e.stopPropagation()} />
+      <LightboxImage key={it.src} src={it.src} alt={it.alt} />
       {it.alt ? <div className="lightbox-caption mono">{it.alt}</div> : null}
     </div>,
     document.body
+  );
+}
+
+// A muted placeholder shown when an image can't be loaded (the source file
+// was cleaned up, the path moved, etc.) — beats the browser's broken-image
+// glyph. Carries the filename so it's still identifiable.
+function MissingImage({ alt }: { alt: string }) {
+  return (
+    <div className="img-missing" title={`${alt} — image unavailable`}>
+      <Icons.image size={22} />
+      <span className="img-missing-name">{alt}</span>
+      <span className="img-missing-hint">image unavailable</span>
+    </div>
+  );
+}
+
+function LightboxImage({ src, alt }: { src: string; alt: string }) {
+  const [errored, setErrored] = useState(false);
+  if (errored) return <div className="lightbox-missing"><MissingImage alt={alt} /></div>;
+  return <img className="lightbox-img" src={src} alt={alt} onClick={(e) => e.stopPropagation()} onError={() => setErrored(true)} />;
+}
+
+function Thumb({ it, onOpen }: { it: ImgItem; onOpen: () => void }) {
+  const [errored, setErrored] = useState(false);
+  if (errored) return <div className="img-thumb is-missing"><MissingImage alt={it.alt} /></div>;
+  return (
+    <button type="button" className="img-thumb" onClick={onOpen} title={it.alt}>
+      <img src={it.src} loading="lazy" alt={it.alt} onError={() => setErrored(true)} />
+      <span className="img-thumb-overlay"><Icons.zoomIn size={12} /></span>
+    </button>
   );
 }
 
@@ -623,12 +653,7 @@ function ImageGallery({ items, onOpen }: { items: ImgItem[]; onOpen: (ix: number
   if (!items.length) return null;
   return (
     <div className="img-gallery">
-      {items.map((it, i) => (
-        <button key={it.key + i} type="button" className="img-thumb" onClick={() => onOpen(i)} title={it.alt}>
-          <img src={it.src} loading="lazy" alt={it.alt} />
-          <span className="img-thumb-overlay"><Icons.zoomIn size={12} /></span>
-        </button>
-      ))}
+      {items.map((it, i) => <Thumb key={it.key + i} it={it} onOpen={() => onOpen(i)} />)}
     </div>
   );
 }

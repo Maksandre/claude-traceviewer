@@ -615,6 +615,14 @@ button { font-family: inherit; }
 .img-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .img-thumb-overlay { position: absolute; inset: 0; display: grid; place-items: center; color: #fff; opacity: 0; background: color-mix(in oklch, #000 35%, transparent); transition: opacity .15s; pointer-events: none; }
 .img-thumb:hover .img-thumb-overlay { opacity: 1; }
+/* Placeholder for images whose source file is gone — beats the broken-image glyph. */
+.img-thumb.is-missing { cursor: default; border-style: dashed; }
+.img-thumb.is-missing:hover { border-color: var(--line); }
+.img-missing { width: 100%; height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 6px; text-align: center; background: var(--bg-2); color: var(--tx-3); }
+.img-missing-name { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-1); max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.img-missing-hint { font-family: var(--ff-mono); font-size: 9px; color: var(--tx-3); letter-spacing: .03em; }
+.lightbox-missing { display: grid; place-items: center; }
+.lightbox-missing .img-missing { width: 240px; height: 180px; border: 1px dashed var(--line); border-radius: var(--r-md); }
 
 /* [Image #N] inline references styled as small clickable chips */
 .user-bubble a[href^="#image:"] { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); text-decoration: none; border-bottom: none; font-family: var(--ff-mono); font-size: 0.9em; cursor: zoom-in; transition: background .15s, color .15s; }
