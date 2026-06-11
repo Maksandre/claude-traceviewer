@@ -111,9 +111,11 @@ function adviceFor(ins: CacheInsights): string | null {
 }
 
 function CachePanel({ trace }: { trace: NormTrace }) {
-  const ins = useMemo(() => analyzeCache(trace), [trace]);
-  const maxCtx = Math.max(...ins.series.map(p => p.read + p.written + p.fresh), 1);
-  const advice = adviceFor(ins);
+  const { ins, maxCtx, advice } = useMemo(() => {
+    const ins = analyzeCache(trace);
+    const maxCtx = Math.max(...ins.series.map(p => p.read + p.written + p.fresh), 1);
+    return { ins, maxCtx, advice: adviceFor(ins) };
+  }, [trace]);
   return (
     <div className="cachep">
       <div className="cachep-chips">
@@ -140,7 +142,7 @@ function CachePanel({ trace }: { trace: NormTrace }) {
         </div>
       </div>
 
-      <div className="cachep-chart">
+      <div className="cachep-chart" role="img" aria-label={`Context per API call — ${ins.series.length} calls`}>
         {ins.series.map((p, i) => {
           const ctx = p.read + p.written + p.fresh;
           const h = Math.max((ctx / maxCtx) * 100, 2);

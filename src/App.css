@@ -767,14 +767,14 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .cachep-chip { flex: 1; min-width: 110px; background: var(--bg-2); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 9px 12px; display: flex; flex-direction: column; gap: 3px; }
 .cachep-k { font-family: var(--ff-mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--tx-3); }
 .cachep-v { font-family: var(--ff-mono); font-size: 17px; font-weight: 600; color: var(--tx-0); }
-.cachep-v.ok { color: var(--ok, #4a9); }
+.cachep-v.ok { color: var(--ok); }
 .cachep-v.warn { color: var(--warn); }
 .cachep-causes { font-family: var(--ff-mono); font-size: 10px; color: var(--tx-3); }
 .cachep-chart { display: flex; align-items: flex-end; gap: 1px; height: 56px; background: var(--bg-2); border-radius: var(--r-sm); padding: 4px 4px 0; overflow: hidden; }
-.cachep-bar { flex: 1; min-width: 1px; max-width: 14px; position: relative; background: color-mix(in oklch, var(--sonnet) 55%, transparent); border-radius: 1px 1px 0 0; }
+.cachep-bar { flex: 1; min-width: 0; max-width: 14px; position: relative; background: color-mix(in oklch, var(--sonnet) 55%, transparent); border-radius: 1px 1px 0 0; }
 .cachep-bar-w { position: absolute; top: 0; left: 0; right: 0; background: var(--warn); border-radius: 1px 1px 0 0; opacity: .45; }
-.cachep-bar.is-rebuild { background: color-mix(in oklch, var(--err, #d66) 35%, transparent); }
-.cachep-bar.is-rebuild .cachep-bar-w { background: var(--err, #d66); opacity: .9; }
+.cachep-bar.is-rebuild { background: color-mix(in oklch, var(--err) 35%, transparent); }
+.cachep-bar.is-rebuild .cachep-bar-w { background: var(--err); opacity: .9; }
 .cachep-caption { font-family: var(--ff-mono); font-size: 10px; color: var(--tx-3); }
 .cachep-events { display: flex; flex-direction: column; gap: 2px; max-height: 180px; overflow-y: auto; }
 .cachep-event { display: grid; grid-template-columns: 52px 1fr auto auto; gap: 10px; align-items: baseline; font-size: 12px; padding: 4px 6px; border-radius: var(--r-sm); }
