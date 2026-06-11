@@ -110,27 +110,55 @@ function adviceFor(ins: CacheInsights): string | null {
   return `${px} of ${n} rebuilds came from prefix changes — the system prompt or tool set changed mid-session; keeping them stable preserves the cache.`;
 }
 
-const MAX_CHART_BARS = 160;
+const IDLE_GAP_MS = 5 * 60_000;
 
-function CachePanel({ trace }: { trace: NormTrace }) {
-  const { ins, maxCtx, advice, display } = useMemo(() => {
+function ContextTimeline({ ins, onOpenMessage }: { ins: CacheInsights; onOpenMessage: (uuid: string) => void }) {
+  const pts = ins.series;
+  if (pts.length < 2) return <div className="cachep-empty">not enough calls to chart</div>;
+  // Build an x position per point: real elapsed time, but any gap over the idle
+  // threshold is clamped to a fixed slot so one long pause doesn't flatten the rest.
+  const times = pts.map(p => new Date(p.ts).getTime());
+  const SLOT = 1; // compressed gap width in arbitrary x-units
+  const xs: number[] = [0];
+  const breaks: { x: number; ms: number }[] = [];
+  for (let i = 1; i < pts.length; i++) {
+    const raw = Number.isNaN(times[i]) || Number.isNaN(times[i - 1]) ? 0 : times[i] - times[i - 1];
+    if (raw > IDLE_GAP_MS) { breaks.push({ x: xs[i - 1] + SLOT / 2, ms: raw }); xs.push(xs[i - 1] + SLOT); }
+    else xs.push(xs[i - 1] + Math.max(raw / 1000, 0.001)); // seconds as x-units
+  }
+  const maxX = xs[xs.length - 1] || 1;
+  const ctx = pts.map(p => p.read + p.written + p.fresh);
+  const maxY = Math.max(...ctx, 1);
+  const W = 100, H = 40;
+  const px = (x: number) => (x / maxX) * W;
+  const py = (y: number) => H - (y / maxY) * H;
+  const line = pts.map((_p, i) => `${px(xs[i]).toFixed(2)},${py(ctx[i]).toFixed(2)}`).join(" ");
+  const area = `0,${H} ${line} ${px(xs[xs.length - 1]).toFixed(2)},${H}`;
+  return (
+    <div className="ctl">
+      <svg className="ctl-svg" viewBox={`0 0 ${W} ${H}`} preserveAspectRatio="none" role="img" aria-label={`Context size across ${pts.length} calls`}>
+        <polygon className="ctl-area" points={area} />
+        <polyline className="ctl-line" points={line} />
+        {breaks.map((b, i) => <line key={"b" + i} className="ctl-break" x1={px(b.x)} x2={px(b.x)} y1={0} y2={H} />)}
+        {pts.map((p, i) => p.rebuild ? (
+          <circle key={i} className="ctl-dot" cx={px(xs[i])} cy={py(ctx[i])} r={1.4}
+            onClick={() => onOpenMessage(p.msgUuid)}>
+            <title>cache rebuilt here — click to open</title>
+          </circle>
+        ) : null)}
+      </svg>
+      <div className="ctl-breaks">
+        {breaks.map((b, i) => <span key={i} className="ctl-break-lbl">⏸ {fmtDur(b.ms)} idle</span>)}
+      </div>
+      <div className="cachep-caption">Claude re-reads the whole conversation each call — this line is how big that re-read is; red dots are where the cache broke and was rebuilt (click to open).</div>
+    </div>
+  );
+}
+
+function CachePanel({ trace, onOpenMessage }: { trace: NormTrace; onOpenMessage: (uuid: string) => void }) {
+  const { ins, advice } = useMemo(() => {
     const ins = analyzeCache(trace);
-    const maxCtx = Math.max(...ins.series.map(p => p.read + p.written + p.fresh), 1);
-    // Long sessions have thousands of calls — more bars than pixels. Bucket for
-    // display: keep each bucket's biggest-context call, flag if any call rebuilt.
-    let display = ins.series;
-    if (display.length > MAX_CHART_BARS) {
-      const bucketSize = Math.ceil(display.length / MAX_CHART_BARS);
-      const out: typeof display = [];
-      for (let i = 0; i < ins.series.length; i += bucketSize) {
-        const slice = ins.series.slice(i, i + bucketSize);
-        let top = slice[0];
-        for (const p of slice) if (p.read + p.written + p.fresh > top.read + top.written + top.fresh) top = p;
-        out.push({ ...top, rebuild: slice.some(p => p.rebuild) });
-      }
-      display = out;
-    }
-    return { ins, maxCtx, advice: adviceFor(ins), display };
+    return { ins, advice: adviceFor(ins) };
   }, [trace]);
   return (
     <div className="cachep">
@@ -158,29 +186,12 @@ function CachePanel({ trace }: { trace: NormTrace }) {
         </div>
       </div>
 
-      <div className="cachep-chart" role="img" aria-label={`Context per API call — ${ins.series.length} calls`}>
-        {display.map((p, i) => {
-          const ctx = p.read + p.written + p.fresh;
-          const h = Math.max((ctx / maxCtx) * 100, 2);
-          const wh = ctx ? (p.written / ctx) * h : 0;
-          return (
-            <span
-              key={i}
-              className={"cachep-bar" + (p.rebuild ? " is-rebuild" : "")}
-              style={{ height: h + "%" }}
-              title={`${p.agent} · ${fmtTokensShort(p.read)} read · ${fmtTokensShort(p.written)} written${p.rebuild ? " · CACHE REBUILT" : ""}`}
-            >
-              <span className="cachep-bar-w" style={{ height: wh ? Math.max((wh / h) * 100, p.rebuild ? 60 : 4) + "%" : "0%" }} />
-            </span>
-          );
-        })}
-      </div>
-      <div className="cachep-caption">context per call — red = cache broke, re-written at 1.25× price</div>
+      <ContextTimeline ins={ins} onOpenMessage={onOpenMessage} />
 
       {ins.events.length ? (
         <div className="cachep-events">
           {ins.events.map((e, i) => (
-            <div key={i} className="cachep-event">
+            <button key={i} type="button" className="cachep-event cachep-event-btn" onClick={() => onOpenMessage(e.msgUuid)}>
               <span className="cachep-ev-time tnum">{fmtTime(e.ts)}</span>
               <span className="cachep-ev-cause">
                 {e.agent !== "main" ? <span className="cachep-ev-agent">{e.agent}</span> : null}
@@ -188,7 +199,7 @@ function CachePanel({ trace }: { trace: NormTrace }) {
               </span>
               <span className="cachep-ev-tok tnum">{fmtTokensShort(e.rebuiltTokens)} re-written</span>
               <span className="cachep-ev-cost tnum">+{fmtCost(e.wastedUsd)}</span>
-            </div>
+            </button>
           ))}
         </div>
       ) : (
@@ -499,7 +510,6 @@ function AgentGantt({ trace, onOpen }: { trace: NormTrace; onOpen: (id: string) 
 }
 
 export function StatsView({ trace, onOpenAgent, onOpenMessage }: Props) {
-  void onOpenMessage; // temporary: consumed in Task 6
   const s = trace.stats;
   const sess = trace.session;
   const totTok = useMemo(() => s.totals.input + s.totals.output + s.totals.cw + s.totals.cr, [s.totals]);
@@ -516,7 +526,7 @@ export function StatsView({ trace, onOpenAgent, onOpenMessage }: Props) {
 
       <div className="stats-grid">
         <Panel title="Prompt caching" sub={`${(s.cacheRatio * 100).toFixed(1)}% of input read from cache`}>
-          <CachePanel trace={trace} />
+          <CachePanel trace={trace} onOpenMessage={onOpenMessage} />
         </Panel>
 
         <Panel title="Model mix" sub="by token volume">
