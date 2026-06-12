@@ -28,6 +28,7 @@ function trace(mainMsgs: NormMsg[], agents: { agentType: string; messages: NormM
       prompt: "", startedAt: "", endedAt: "", durationMs: 0, msgCount: a.messages.length,
       messages: a.messages, toolResults: {}, toolCounts: {}, toolUseMsgUuid: {}, usage: u, peakContext: 0, result: "", persona: null,
     })),
+    workflows: [],
     stats: { totals: u, modelMix: { fable: 0, opus: 0, sonnet: 0, haiku: 0 }, toolFreq: {}, cacheRatio: 0.97, modelStats: [] },
   } as NormTrace;
 }

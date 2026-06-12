@@ -98,7 +98,7 @@ const TOOL_CAT_MAP: Record<string, ToolCat> = {
   Read: "read", Glob: "read", Grep: "read", NotebookRead: "read", LS: "read",
   Write: "write", Edit: "write", MultiEdit: "write", NotebookEdit: "write",
   Bash: "exec", BashOutput: "exec", KillShell: "exec",
-  Agent: "agent", Task: "agent", SendMessage: "agent",
+  Agent: "agent", Task: "agent", SendMessage: "agent", Workflow: "agent",
   WebFetch: "web", WebSearch: "web", ToolSearch: "web",
 };
 

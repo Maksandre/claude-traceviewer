@@ -501,6 +501,48 @@ button { font-family: inherit; }
 .agent-spawn-transcript .msg { grid-template-columns: 60px 1fr; gap: 10px; padding-top: 8px; padding-bottom: 8px; }
 .agent-spawn-transcript .conv-end, .agent-spawn-transcript .live-tail { display: none; }
 
+/* === Workflow card (Workflow tool fan-out) === */
+.workflow-spawn-agents { border-top: 1px solid color-mix(in oklch, var(--ac) 28%, var(--line-soft)); padding: 10px 14px 12px 14px; background: color-mix(in oklch, var(--ac) 3%, var(--bg-0)); border-radius: 0 0 var(--r-md) var(--r-md); display: flex; flex-direction: column; gap: 8px; }
+.workflow-spawn-agents .agent-spawn { --ac: oklch(0.70 0.12 285); }
+.workflow-script { margin-top: 2px; font-size: 11px; }
+.workflow-script > summary { cursor: pointer; font-family: var(--ff-mono); font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; color: var(--tx-3); padding: 4px 0; }
+.workflow-script > summary:hover { color: var(--tx-2); }
+
+/* Workflow groups in the delegation tree rail. The workflow is a real node
+   under main (its elbow ties into main's child line); its agents nest one
+   level deeper under .tree-wf-children, tinted with the workflow hue so the
+   ownership reads as workflow → agents rather than main → agents. */
+.tree-wf-group { margin-top: 2px; }
+.tree-wf-group > .tn-wrap > .tn-elbow { top: 16px; }
+.tree-wf-head { display: flex; align-items: center; gap: 8px; padding: 7px 9px; border-radius: var(--r-md); font-family: var(--ff-mono); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: oklch(0.60 0.13 285); background: color-mix(in oklch, oklch(0.65 0.14 285) 7%, transparent); border: 1px solid color-mix(in oklch, oklch(0.65 0.14 285) 22%, transparent); }
+.tree-wf-ic { display: inline-flex; color: oklch(0.65 0.14 285); }
+.tree-wf-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tree-wf-count { color: var(--tx-3); background: var(--bg-2); padding: 1px 6px; border-radius: 99px; }
+.tree-wf-children { border-left-color: color-mix(in oklch, oklch(0.65 0.14 285) 40%, var(--line)); }
+.tree-wf-children .tn-elbow { background: color-mix(in oklch, oklch(0.65 0.14 285) 40%, var(--line)); }
+.tree-wf-group { position: relative; }
+
+/* Terminate a child spine at the last node's elbow. The container's
+   border-left runs full height, so without this it dangles below the final
+   agent as if a sibling were hidden. We repaint the rail background over the
+   border from just under the last elbow down to the container's bottom. */
+.tree-children > .tn-wrap:last-child::after,
+.tree-wf-children > .tn-wrap:last-child::after {
+  content: ""; position: absolute; left: -1.5px; top: 26px; bottom: -4px; width: 2px; background: var(--bg-1);
+}
+/* When a workflow group is the last child of main, stop main's spine just
+   below the workflow node (its elbow sits higher, at 16px). */
+.tree-children > .tree-wf-group:last-child::after {
+  content: ""; position: absolute; left: -1.5px; top: 18px; bottom: -4px; width: 2px; background: var(--bg-1);
+}
+
+/* Workflow groups in the main-agent delegated list */
+.deleg-wf-group { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px dashed color-mix(in oklch, oklch(0.65 0.14 285) 40%, var(--line)); border-radius: var(--r-md); background: color-mix(in oklch, oklch(0.65 0.14 285) 4%, transparent); }
+.deleg-wf-head { display: flex; align-items: center; gap: 8px; font-family: var(--ff-mono); font-size: 11px; }
+.deleg-wf-ic { display: inline-flex; color: oklch(0.65 0.14 285); }
+.deleg-wf-name { font-weight: 600; color: oklch(0.60 0.13 285); }
+.deleg-wf-count { margin-left: auto; color: var(--tx-3); }
+
 /* === Task cards (TaskCreate / TaskUpdate) === */
 .task-card { background: var(--bg-1); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 10px 12px; font-size: var(--fs-body); }
 .task-card-head { display: flex; align-items: center; gap: 9px; }

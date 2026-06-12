@@ -3,6 +3,21 @@ import { agentColor, agentMeta, contextWindow, fmtCost, fmtDur, fmtTokens, model
 import { Icons } from "../lib/icons";
 import { CodeBlock, Markdown } from "../lib/md";
 import type { NormAgent, NormTrace } from "../lib/normalize";
+
+// Partition agents into workflow runs (grouped under the launching Workflow
+// call) and standalone Agent/Task spawns. Standalone agents keep their
+// original order; workflow groups follow, each listing the agents it spawned.
+function partitionAgents(trace: NormTrace): { standalone: NormAgent[]; groups: { name: string; runId: string; agents: NormAgent[] }[] } {
+  const byId = Object.fromEntries(trace.agents.map(a => [a.id, a]));
+  const grouped = new Set<string>();
+  const groups = trace.workflows.map(w => {
+    const agents = w.agentIds.map(id => byId[id]).filter(Boolean);
+    agents.forEach(a => grouped.add(a.id));
+    return { name: w.name || "workflow", runId: w.runId, agents };
+  }).filter(g => g.agents.length > 0);
+  const standalone = trace.agents.filter(a => !grouped.has(a.id));
+  return { standalone, groups };
+}
 import { clearCachedPersona, getCachedPersona, pickPluginDirectory, type CachedPersona } from "../lib/personaCache";
 import { Transcript, type ViewSettings } from "./conversation/Transcript";
 import { ToolFilterStrip } from "./ToolFilterStrip";
@@ -246,9 +261,30 @@ function PersonaSection({ agent }: { agent: NormAgent }) {
   );
 }
 
+function DelegItem({ agent: a, onSelect }: { agent: NormAgent; onSelect: (k: string) => void }) {
+  const col = agentColor(a.agentType);
+  return (
+    <button className="deleg-item" style={{ "--ac": col } as React.CSSProperties} onClick={() => onSelect("agent:" + a.id)}>
+      <span className="deleg-ic" style={{ color: col, background: `color-mix(in oklch, ${col} 16%, transparent)` }}>
+        <Icons.agent size={15} />
+      </span>
+      <span className="deleg-body">
+        <span className="deleg-type" style={{ color: col }}>{a.agentType}</span>
+        <span className="deleg-desc">{a.description}</span>
+      </span>
+      <span className="deleg-meta tnum">
+        <b>{fmtCost(a.usage.cost)}</b>
+        <span>{fmtDur(a.durationMs)}</span>
+      </span>
+      <span className="deleg-go"><Icons.arrowRight size={14} /></span>
+    </button>
+  );
+}
+
 function MainDetail({ trace, onSelect, onGotoConversation }: { trace: NormTrace; onSelect: (k: string) => void; onGotoConversation: () => void }) {
   const s = trace.session;
   const mainTools = Object.values(trace.main.toolCounts).reduce((a, b) => a + b, 0);
+  const { standalone, groups } = partitionAgents(trace);
   return (
     <div className="adetail fade-in">
       <div className="adetail-head">
@@ -285,25 +321,17 @@ function MainDetail({ trace, onSelect, onGotoConversation }: { trace: NormTrace;
       <div className="delegation">
         <div className="kv-label" style={{ marginBottom: 10 }}>delegated work</div>
         <div className="deleg-list">
-          {trace.agents.map(a => {
-            const col = agentColor(a.agentType);
-            return (
-              <button key={a.id} className="deleg-item" style={{ "--ac": col } as React.CSSProperties} onClick={() => onSelect("agent:" + a.id)}>
-                <span className="deleg-ic" style={{ color: col, background: `color-mix(in oklch, ${col} 16%, transparent)` }}>
-                  <Icons.agent size={15} />
-                </span>
-                <span className="deleg-body">
-                  <span className="deleg-type" style={{ color: col }}>{a.agentType}</span>
-                  <span className="deleg-desc">{a.description}</span>
-                </span>
-                <span className="deleg-meta tnum">
-                  <b>{fmtCost(a.usage.cost)}</b>
-                  <span>{fmtDur(a.durationMs)}</span>
-                </span>
-                <span className="deleg-go"><Icons.arrowRight size={14} /></span>
-              </button>
-            );
-          })}
+          {standalone.map(a => <DelegItem key={a.id} agent={a} onSelect={onSelect} />)}
+          {groups.map(g => (
+            <div className="deleg-wf-group" key={g.runId}>
+              <div className="deleg-wf-head" title={g.runId}>
+                <span className="deleg-wf-ic"><Icons.workflow size={13} /></span>
+                <span className="deleg-wf-name">{g.name}</span>
+                <span className="deleg-wf-count tnum">{g.agents.length} agents · {fmtCost(g.agents.reduce((s, a) => s + a.usage.cost, 0))}</span>
+              </div>
+              {g.agents.map(a => <DelegItem key={a.id} agent={a} onSelect={onSelect} />)}
+            </div>
+          ))}
           {trace.agents.length === 0 ? <div className="empty">no subagents in this session</div> : null}
         </div>
       </div>
@@ -326,6 +354,7 @@ export function AgentsView({ trace, settings, onGotoConversation, focusAgentId, 
 
   const onOpenAgent = (id: string) => setSel("agent:" + id);
   const selectedAgent = sel.startsWith("agent:") ? agentsById[sel.slice(6)] : undefined;
+  const { standalone, groups } = useMemo(() => partitionAgents(trace), [trace]);
 
   return (
     <div className="agents-view">
@@ -347,7 +376,7 @@ export function AgentsView({ trace, settings, onGotoConversation, focusAgentId, 
             onSelect={setSel}
           />
           <div className="tree-children">
-            {trace.agents.map(a => (
+            {standalone.map(a => (
               <TreeNode
                 key={a.id}
                 kind="agent"
@@ -361,6 +390,38 @@ export function AgentsView({ trace, settings, onGotoConversation, focusAgentId, 
                 depth={1}
                 onSelect={setSel}
               />
+            ))}
+            {groups.map(g => (
+              <div className="tree-wf-group" key={g.runId}>
+                {/* The workflow is itself a node under main; its agents nest
+                    one level deeper so they read as spawned by the workflow,
+                    not directly by the orchestrator. */}
+                <div className="tn-wrap depth-1">
+                  <span className="tn-elbow" />
+                  <div className="tree-wf-head" title={g.runId}>
+                    <span className="tree-wf-ic"><Icons.workflow size={13} /></span>
+                    <span className="tree-wf-name">{g.name}</span>
+                    <span className="tree-wf-count tnum">{g.agents.length}</span>
+                  </div>
+                </div>
+                <div className="tree-children tree-wf-children">
+                  {g.agents.map(a => (
+                    <TreeNode
+                      key={a.id}
+                      kind="agent"
+                      nodeKey={"agent:" + a.id}
+                      agentType={a.agentType}
+                      description={a.description}
+                      usage={a.usage}
+                      durationMs={a.durationMs}
+                      toolCounts={a.toolCounts}
+                      selected={sel}
+                      depth={1}
+                      onSelect={setSel}
+                    />
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         </div>
