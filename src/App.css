@@ -521,20 +521,27 @@ button { font-family: inherit; }
 .tree-wf-children { border-left-color: color-mix(in oklch, oklch(0.65 0.14 285) 40%, var(--line)); }
 .tree-wf-children .tn-elbow { background: color-mix(in oklch, oklch(0.65 0.14 285) 40%, var(--line)); }
 .tree-wf-group { position: relative; }
+/* Each agent (and any subagents it spawned) is wrapped in a node-group so the
+   tree can nest recursively; the wrapper hosts the nested .tree-children. */
+.tree-node-group { position: relative; }
 
 /* Terminate a child spine at the last node's elbow. The container's
    border-left runs full height, so without this it dangles below the final
-   agent as if a sibling were hidden. We repaint the rail background over the
-   border from just under the last elbow down to the container's bottom. */
-.tree-children > .tn-wrap:last-child::after,
-.tree-wf-children > .tn-wrap:last-child::after {
-  content: ""; position: absolute; left: -1.5px; top: 26px; bottom: -4px; width: 2px; background: var(--bg-1);
-}
-/* When a workflow group is the last child of main, stop main's spine just
-   below the workflow node (its elbow sits higher, at 16px). */
+   node as if a sibling were hidden. We repaint the rail background over the
+   border from just under the last elbow down to the container's bottom. The
+   last child is always a node-group (top:26, agent elbow at 24) or a workflow
+   group (top:18, workflow node elbow at 16). */
+.tree-children > .tree-node-group:last-child::after,
 .tree-children > .tree-wf-group:last-child::after {
-  content: ""; position: absolute; left: -1.5px; top: 18px; bottom: -4px; width: 2px; background: var(--bg-1);
+  content: ""; position: absolute; left: -1.5px; bottom: -4px; width: 2px; background: var(--bg-1);
 }
+.tree-children > .tree-node-group:last-child::after { top: 26px; }
+.tree-children > .tree-wf-group:last-child::after { top: 18px; }
+
+/* Nested subagents in the main-agent delegated list, indented under their
+   spawning agent. */
+.deleg-nested { margin-left: 18px; padding-left: 10px; border-left: 1.5px solid var(--line); display: flex; flex-direction: column; gap: 8px; margin-top: 8px; }
+.adetail-children { margin-top: 4px; }
 
 /* Workflow groups in the main-agent delegated list */
 .deleg-wf-group { display: flex; flex-direction: column; gap: 8px; padding: 8px; border: 1px dashed color-mix(in oklch, oklch(0.65 0.14 285) 40%, var(--line)); border-radius: var(--r-md); background: color-mix(in oklch, oklch(0.65 0.14 285) 4%, transparent); }

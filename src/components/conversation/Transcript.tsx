@@ -171,6 +171,7 @@ function Blocks({ entries, getResult, agentsByToolUse, workflowsByToolUse, onOpe
           <AgentSpawnCard
             block={b}
             agent={agent}
+            agentsByToolUse={agentsByToolUse}
             onOpen={onOpenAgent}
             settings={settings}
             query={query}
@@ -183,7 +184,7 @@ function Blocks({ entries, getResult, agentsByToolUse, workflowsByToolUse, onOpe
         const spawn = b.id ? workflowsByToolUse?.[b.id] : undefined;
         if (spawn) {
           rendered.push(wrap(i, b, msgUuid, idxInMsg,
-            <WorkflowCard block={b} spawn={spawn} onOpen={onOpenAgent} settings={settings} query={query} forceExpandedAgents={forceExpandedAgents} />,
+            <WorkflowCard block={b} spawn={spawn} agentsByToolUse={agentsByToolUse} onOpen={onOpenAgent} settings={settings} query={query} forceExpandedAgents={forceExpandedAgents} />,
           ));
           return;
         }
@@ -215,9 +216,10 @@ function Blocks({ entries, getResult, agentsByToolUse, workflowsByToolUse, onOpe
 // filtering by a query and this subagent's transcript contained a hit,
 // `forceExpanded` is set so the card opens automatically — and we pass the
 // query into the inner Transcript so it filters to just the matching lines.
-function AgentSpawnCard({ block, agent, onOpen, settings, query, forceExpanded }: {
+function AgentSpawnCard({ block, agent, agentsByToolUse, onOpen, settings, query, forceExpanded }: {
   block: NormBlock;
   agent?: NormAgent;
+  agentsByToolUse?: Record<string, NormAgent>;
   onOpen: (id: string) => void;
   settings?: ViewSettings;
   query?: string;
@@ -309,7 +311,7 @@ function AgentSpawnCard({ block, agent, onOpen, settings, query, forceExpanded }
           <Transcript
             messages={agent.messages}
             toolResults={agent.toolResults}
-            agentsByToolUse={{}}
+            agentsByToolUse={agentsByToolUse || {}}
             onOpenAgent={onOpen}
             settings={settings}
             query={query}
@@ -325,9 +327,10 @@ function AgentSpawnCard({ block, agent, onOpen, settings, query, forceExpanded }
 // Renders the run (name + summary + roll-up stats) and, when expanded, the
 // list of spawned subagents — each an AgentSpawnCard reusing the same inline
 // transcript + open-in-drawer affordances as a direct Agent/Task spawn.
-function WorkflowCard({ block, spawn, onOpen, settings, query, forceExpandedAgents }: {
+function WorkflowCard({ block, spawn, agentsByToolUse, onOpen, settings, query, forceExpandedAgents }: {
   block: NormBlock;
   spawn: WorkflowSpawn;
+  agentsByToolUse?: Record<string, NormAgent>;
   onOpen: (id: string) => void;
   settings: ViewSettings;
   query?: string;
@@ -396,6 +399,7 @@ function WorkflowCard({ block, spawn, onOpen, settings, query, forceExpandedAgen
               key={a.id}
               block={{ type: "tool_use", name: "Task", input: { subagent_type: a.agentType, description: a.description } }}
               agent={a}
+              agentsByToolUse={agentsByToolUse}
               onOpen={onOpen}
               settings={settings}
               query={query}

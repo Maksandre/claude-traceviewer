@@ -51,6 +51,10 @@ export interface NormAgent {
   /** Set when this agent was spawned by a Workflow tool call rather than a
    * direct Agent/Task spawn. Holds the workflow run id (e.g. "wf_29eaba04-db0"). */
   workflowId?: string;
+  /** id of the agent that spawned this one, or "" when spawned by the main
+   * agent. Subagents can spawn their own subagents; this reconstructs the
+   * real delegation tree instead of flattening everything under main. */
+  parentId?: string;
 }
 
 /** One Workflow tool run: the orchestration that fanned out a set of subagents. */
@@ -408,6 +412,12 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
 
   // fetch each agent's trace
   const agents: NormAgent[] = [];
+  // Map every Agent/Task spawn (by its tool_use id) to the agent that emitted
+  // it — "" for the main agent. A subagent's meta.toolUseId points at the
+  // spawn call inside its *parent's* transcript, so this lets us recover the
+  // real parent for nested subagents. Seed with the main agent's own spawns.
+  const spawnerByToolUseId = new Map<string, string>();
+  for (const tuid of Object.keys(mainNorm.spawnByToolUseId)) spawnerByToolUseId.set(tuid, "");
   for (const aid of agentIds) {
     try {
       const r = await fetch(`/api/projects/${encodeURIComponent(project)}/sessions/${encodeURIComponent(session)}/agents/${encodeURIComponent(aid)}`);
@@ -416,6 +426,9 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
       const meta = readMeta(data?.meta);
       const aRecs: TraceRecord[] = data?.records || [];
       const aNorm = normalizeRecords(aRecs);
+      // Record the Agent/Task spawns this subagent made so its children can
+      // resolve their parent back to this agent.
+      for (const tuid of Object.keys(aNorm.spawnByToolUseId)) spawnerByToolUseId.set(tuid, aid);
       const workflowId = data?.workflowId || workflowIdByAgentId.get(aid) || undefined;
       const toolUseId = meta.toolUseId || [...agentIdByToolUseId.entries()].find(([, v]) => v === aid)?.[0] || "";
       // skip the first user message (the prompt) — it's the agent prompt
@@ -461,6 +474,9 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
       /* ignore */
     }
   }
+
+  // Resolve each agent's parent now that every agent's spawns are known.
+  for (const a of agents) a.parentId = a.toolUseId ? (spawnerByToolUseId.get(a.toolUseId) ?? "") : "";
 
   // Assemble workflow runs: one per Workflow tool call that we found a run id
   // for, listing the subagents it spawned. Agents are matched by workflowId.
