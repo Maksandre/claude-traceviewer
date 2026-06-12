@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
-import type { NormAgent, NormTrace } from "../lib/normalize";
+import type { NormAgent, NormTrace, NormWorkflow } from "../lib/normalize";
 import { contextWindow, fmtCost, fmtDur, fmtTokens, modelColor, modelLabel } from "../lib/format";
 import { Icons } from "../lib/icons";
 import { useSearchHighlight } from "../lib/searchHighlight";
@@ -93,6 +93,18 @@ export function ConversationView({ trace, query, onOpenAgent, settings, live, ta
     for (const a of trace.agents) if (a.toolUseId) m[a.toolUseId] = a;
     return m;
   }, [trace.agents]);
+
+  // Maps a Workflow tool_use id to its run plus the subagents it spawned, so
+  // the conversation can render the launch as an expandable fan-out instead of
+  // a raw script dump.
+  const workflowsByToolUse = useMemo(() => {
+    const byId: Record<string, NormAgent> = Object.fromEntries(trace.agents.map(a => [a.id, a]));
+    const m: Record<string, { workflow: NormWorkflow; agents: NormAgent[] }> = {};
+    for (const w of trace.workflows) {
+      m[w.toolUseId] = { workflow: w, agents: w.agentIds.map(id => byId[id]).filter(Boolean) };
+    }
+    return m;
+  }, [trace.agents, trace.workflows]);
 
   const [toolFilter, setToolFilter] = useState<Set<string>>(() => new Set());
   // A new session/trace can have a totally different tool list, so drop any
@@ -237,13 +249,14 @@ export function ConversationView({ trace, query, onOpenAgent, settings, live, ta
         g={g}
         model={model}
         agentsByToolUse={agentsByToolUse}
+        workflowsByToolUse={workflowsByToolUse}
         onOpenAgent={onOpenAgent}
         settings={settings}
         query={query}
         toolFilter={toolFilter}
       />
     </div>
-  ), [model, agentsByToolUse, onOpenAgent, settings, query, highlightKey, toolFilter]);
+  ), [model, agentsByToolUse, workflowsByToolUse, onOpenAgent, settings, query, highlightKey, toolFilter]);
 
   const Header = useCallback(() => (
     <div className="conv-row conv-row-header">

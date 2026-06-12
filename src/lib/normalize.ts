@@ -48,6 +48,24 @@ export interface NormAgent {
   peakContext: number;
   result: string;
   persona: { content: string; resolvedPath: string } | null;
+  /** Set when this agent was spawned by a Workflow tool call rather than a
+   * direct Agent/Task spawn. Holds the workflow run id (e.g. "wf_29eaba04-db0"). */
+  workflowId?: string;
+  /** id of the agent that spawned this one, or "" when spawned by the main
+   * agent. Subagents can spawn their own subagents; this reconstructs the
+   * real delegation tree instead of flattening everything under main. */
+  parentId?: string;
+}
+
+/** One Workflow tool run: the orchestration that fanned out a set of subagents. */
+export interface NormWorkflow {
+  runId: string;
+  /** tool_use id of the Workflow call that launched it, for conversation linking. */
+  toolUseId: string;
+  name: string;
+  summary: string;
+  /** ids of the subagents this run spawned, in discovery order. */
+  agentIds: string[];
 }
 
 export interface NormSession {
@@ -79,6 +97,7 @@ export interface NormTrace {
     peakContext: number;
   };
   agents: NormAgent[];
+  workflows: NormWorkflow[];
   stats: NormStats;
 }
 
@@ -183,6 +202,7 @@ function normalizeRecords(records: TraceRecord[]): {
   startedAt: string;
   endedAt: string;
   spawnByToolUseId: Record<string, { type: string; description: string; model?: string }>;
+  workflowByToolUseId: Record<string, { runId: string; name: string; summary: string }>;
   peakContext: number;
 } {
   const merged = buildMergedAssistants(records);
@@ -194,6 +214,9 @@ function normalizeRecords(records: TraceRecord[]): {
   const modelsSeen = new Set<string>();
   let peakContext = 0;
   const spawnByToolUseId: Record<string, { type: string; description: string; model?: string }> = {};
+  // The Workflow tool result carries the runId + transcript dir that ties the
+  // launching tool_use to the subagents written under subagents/workflows/<runId>/.
+  const workflowByToolUseId: Record<string, { runId: string; name: string; summary: string }> = {};
 
   let startedAt = "";
   let endedAt = "";
@@ -215,6 +238,16 @@ function normalizeRecords(records: TraceRecord[]): {
         if (b.type === "tool_result" && b.tool_use_id) {
           toolResults[b.tool_use_id] = { content: b.content || "", is_error: toolResultIsError(b) };
           hasToolResult = true;
+          // A Workflow launch carries its run metadata on the record's
+          // toolUseResult; associate it with the launching tool_use id.
+          const tur = rec.toolUseResult;
+          if (tur && typeof tur === "object" && typeof tur.runId === "string") {
+            workflowByToolUseId[b.tool_use_id] = {
+              runId: tur.runId,
+              name: tur.workflowName || "",
+              summary: tur.summary || "",
+            };
+          }
         }
         if (b.type === "text" && b.text) hasText = true;
       }
@@ -288,7 +321,25 @@ function normalizeRecords(records: TraceRecord[]): {
     }
   }
 
-  return { messages, toolResults, toolCounts, toolUseMsgUuid, usage, modelsSeen, startedAt, endedAt, spawnByToolUseId, peakContext };
+  return { messages, toolResults, toolCounts, toolUseMsgUuid, usage, modelsSeen, startedAt, endedAt, spawnByToolUseId, workflowByToolUseId, peakContext };
+}
+
+// Render a workflow agent's structured journal result (an object the agent
+// returned via StructuredOutput) into readable markdown for the Result tab.
+function formatWorkflowResult(r: unknown): string {
+  if (r == null) return "";
+  if (typeof r === "string") return r;
+  if (typeof r !== "object") return String(r);
+  const obj = r as Record<string, unknown>;
+  const lines: string[] = [];
+  let summary = "";
+  for (const [k, v] of Object.entries(obj)) {
+    if (k === "summary" && typeof v === "string") { summary = v; continue; }
+    if (v == null) continue;
+    if (typeof v === "object") lines.push(`- **${k}:** \`${JSON.stringify(v)}\``);
+    else lines.push(`- **${k}:** ${v}`);
+  }
+  return [lines.join("\n"), summary].filter(Boolean).join("\n\n");
 }
 
 function readMeta(meta: any): { agentType?: string; description?: string; prompt?: string; model?: string; toolUseId?: string } {
@@ -309,6 +360,7 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
   // detect agent ids referenced in the trace
   const agentIds = new Set<string>();
   const agentIdByToolUseId = new Map<string, string>();
+  const workflowIdByAgentId = new Map<string, string>();
   for (const rec of records) {
     if (rec.type === "user" && rec.toolUseResult?.agentId) {
       agentIds.add(rec.toolUseResult.agentId);
@@ -331,6 +383,7 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
           if (!a?.id) continue;
           agentIds.add(a.id);
           if (a.toolUseId) agentIdByToolUseId.set(a.toolUseId, a.id);
+          if (a.workflowId) workflowIdByAgentId.set(a.id, a.workflowId);
         }
       }
     }
@@ -359,6 +412,12 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
 
   // fetch each agent's trace
   const agents: NormAgent[] = [];
+  // Map every Agent/Task spawn (by its tool_use id) to the agent that emitted
+  // it — "" for the main agent. A subagent's meta.toolUseId points at the
+  // spawn call inside its *parent's* transcript, so this lets us recover the
+  // real parent for nested subagents. Seed with the main agent's own spawns.
+  const spawnerByToolUseId = new Map<string, string>();
+  for (const tuid of Object.keys(mainNorm.spawnByToolUseId)) spawnerByToolUseId.set(tuid, "");
   for (const aid of agentIds) {
     try {
       const r = await fetch(`/api/projects/${encodeURIComponent(project)}/sessions/${encodeURIComponent(session)}/agents/${encodeURIComponent(aid)}`);
@@ -367,10 +426,14 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
       const meta = readMeta(data?.meta);
       const aRecs: TraceRecord[] = data?.records || [];
       const aNorm = normalizeRecords(aRecs);
+      // Record the Agent/Task spawns this subagent made so its children can
+      // resolve their parent back to this agent.
+      for (const tuid of Object.keys(aNorm.spawnByToolUseId)) spawnerByToolUseId.set(tuid, aid);
+      const workflowId = data?.workflowId || workflowIdByAgentId.get(aid) || undefined;
       const toolUseId = meta.toolUseId || [...agentIdByToolUseId.entries()].find(([, v]) => v === aid)?.[0] || "";
       // skip the first user message (the prompt) — it's the agent prompt
       const messages = aNorm.messages.length > 0 && aNorm.messages[0].role === "user" ? aNorm.messages.slice(1) : aNorm.messages;
-      const result = data?.result || "";
+      const result = data?.result || formatWorkflowResult(data?.workflowResult) || "";
       const promptText = meta.prompt || (aNorm.messages[0]?.role === "user" ? (aNorm.messages[0].blocks.find(b => b.type === "text")?.text || "") : "");
       const modelStr = meta.model || messages.find(m => m.role === "assistant")?.model || [...aNorm.modelsSeen][0] || "";
       const start = aNorm.startedAt;
@@ -405,10 +468,28 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
         usage: aNorm.usage,
         result: result || lastAssistTxt,
         persona: data?.persona || null,
+        workflowId,
       });
     } catch {
       /* ignore */
     }
+  }
+
+  // Resolve each agent's parent now that every agent's spawns are known.
+  for (const a of agents) a.parentId = a.toolUseId ? (spawnerByToolUseId.get(a.toolUseId) ?? "") : "";
+
+  // Assemble workflow runs: one per Workflow tool call that we found a run id
+  // for, listing the subagents it spawned. Agents are matched by workflowId.
+  const workflows: NormWorkflow[] = [];
+  for (const [toolUseId, info] of Object.entries(mainNorm.workflowByToolUseId)) {
+    const runAgents = agents.filter(a => a.workflowId === info.runId);
+    workflows.push({
+      runId: info.runId,
+      toolUseId,
+      name: info.name,
+      summary: info.summary,
+      agentIds: runAgents.map(a => a.id),
+    });
   }
 
   // compute totals
@@ -475,6 +556,7 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
       usage: mainNorm.usage,
     },
     agents,
+    workflows,
     stats: { totals: allTotals, modelMix, toolFreq, cacheRatio, modelStats },
   };
 }

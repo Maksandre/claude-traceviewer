@@ -27,6 +27,7 @@ function trace(opts: {
       peakContext: 0,
     },
     agents: [],
+    workflows: [],
     stats: { totals: u, modelMix: { fable: 0, opus: 0, sonnet: 0, haiku: 0 }, toolFreq: {}, cacheRatio: 0, modelStats: [] },
   } as NormTrace;
 }

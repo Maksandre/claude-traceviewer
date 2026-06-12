@@ -255,6 +255,50 @@ function resolvePersona(cwd: string, agentType: string): { content: string; reso
   return null;
 }
 
+// Locate a subagent's files. Standard subagents live flat under
+// `subagents/agent-<id>.{jsonl,meta.json}`. Workflow agents (spawned by the
+// Workflow tool) live one level deeper under
+// `subagents/workflows/<runId>/agent-<id>.{jsonl,meta.json}` alongside a
+// shared `journal.jsonl`. Resolve either layout from just the agentId.
+function locateAgent(subagentsDir: string, agentId: string):
+  { jsonlPath: string; metaPath: string; workflowDir?: string; workflowId?: string } | null {
+  const flatJsonl = path.join(subagentsDir, `agent-${agentId}.jsonl`);
+  if (fs.existsSync(flatJsonl)) {
+    return { jsonlPath: flatJsonl, metaPath: path.join(subagentsDir, `agent-${agentId}.meta.json`) };
+  }
+  const wfRoot = path.join(subagentsDir, "workflows");
+  try {
+    for (const wf of fs.readdirSync(wfRoot)) {
+      const workflowDir = path.join(wfRoot, wf);
+      const j = path.join(workflowDir, `agent-${agentId}.jsonl`);
+      if (fs.existsSync(j)) {
+        return { jsonlPath: j, metaPath: path.join(workflowDir, `agent-${agentId}.meta.json`), workflowDir, workflowId: wf };
+      }
+    }
+  } catch { /* no workflows dir — fall through */ }
+  return null;
+}
+
+// A workflow's journal.jsonl records the structured `result` each agent
+// returned to the orchestrator (the authoritative output for agents that
+// emit a StructuredOutput rather than a final text block). Returns the last
+// result recorded for the agent, or null.
+function readWorkflowResult(workflowDir: string, agentId: string): unknown {
+  try {
+    const lines = fs.readFileSync(path.join(workflowDir, "journal.jsonl"), "utf-8").split("\n").filter(Boolean);
+    let result: unknown = null;
+    for (const line of lines) {
+      try {
+        const o = JSON.parse(line);
+        if (o?.type === "result" && o.agentId === agentId) result = o.result;
+      } catch { /* skip malformed journal line */ }
+    }
+    return result;
+  } catch {
+    return null;
+  }
+}
+
 // Get subagent conversation
 app.get("/api/projects/:project/sessions/:session/agents/:agentId", (req, res) => {
   try {
@@ -264,8 +308,10 @@ app.get("/api/projects/:project/sessions/:session/agents/:agentId", (req, res) =
       req.params.session,
       "subagents"
     );
-    const agentFile = path.join(subagentsDir, `agent-${req.params.agentId}.jsonl`);
-    const metaFile = path.join(subagentsDir, `agent-${req.params.agentId}.meta.json`);
+    const located = locateAgent(subagentsDir, req.params.agentId);
+    if (!located) { res.status(404).json({ error: "Agent not found" }); return; }
+    const agentFile = located.jsonlPath;
+    const metaFile = located.metaPath;
 
     // Conditional GET: the client polls this endpoint every few seconds while
     // the subagent is running. The validator combines both files so that meta
@@ -305,7 +351,12 @@ app.get("/api/projects/:project/sessions/:session/agents/:agentId", (req, res) =
     }
     const persona = meta?.agentType ? resolvePersona(cwd, meta.agentType) : null;
 
-    res.json({ meta, records, persona });
+    // For workflow agents, the journal holds the structured result the agent
+    // returned to the orchestrator — more authoritative than the last assistant
+    // text (which may be empty when the agent ends on a StructuredOutput call).
+    const workflowResult = located.workflowDir ? readWorkflowResult(located.workflowDir, req.params.agentId) : null;
+
+    res.json({ meta, records, persona, workflowId: located.workflowId, workflowResult });
   } catch {
     res.status(404).json({ error: "Agent not found" });
   }
@@ -322,19 +373,42 @@ app.get("/api/projects/:project/sessions/:session/agents", (req, res) => {
     );
     if (!fs.existsSync(subagentsDir)) { res.json([]); return; }
 
-    const agents = fs.readdirSync(subagentsDir)
-      .filter((f) => f.endsWith(".meta.json"))
-      .map((f) => {
-        const id = f.replace("agent-", "").replace(".meta.json", "");
-        let meta = null;
-        try { meta = JSON.parse(fs.readFileSync(path.join(subagentsDir, f), "utf-8")); } catch {}
-        const jsonlFile = path.join(subagentsDir, `agent-${id}.jsonl`);
-        let lineCount = 0;
-        try {
-          lineCount = fs.readFileSync(jsonlFile, "utf-8").split("\n").filter(Boolean).length;
-        } catch {}
-        return { id, ...meta, lineCount };
-      });
+    const lineCountOf = (jsonlFile: string) => {
+      try { return fs.readFileSync(jsonlFile, "utf-8").split("\n").filter(Boolean).length; }
+      catch { return 0; }
+    };
+    const readMetaFile = (p: string) => {
+      try { return JSON.parse(fs.readFileSync(p, "utf-8")); } catch { return null; }
+    };
+
+    const agents: any[] = [];
+
+    // Standard subagents, flat under subagents/.
+    for (const f of fs.readdirSync(subagentsDir)) {
+      if (!f.endsWith(".meta.json")) continue;
+      const id = f.replace("agent-", "").replace(".meta.json", "");
+      const meta = readMetaFile(path.join(subagentsDir, f));
+      agents.push({ id, ...meta, lineCount: lineCountOf(path.join(subagentsDir, `agent-${id}.jsonl`)) });
+    }
+
+    // Workflow agents, nested under subagents/workflows/<runId>/. Each is
+    // tagged with its workflowId (the run dir name) so the client can group
+    // them under the Workflow tool call that launched them.
+    const wfRoot = path.join(subagentsDir, "workflows");
+    try {
+      for (const wf of fs.readdirSync(wfRoot)) {
+        const wfDir = path.join(wfRoot, wf);
+        let entries: string[] = [];
+        try { entries = fs.readdirSync(wfDir); } catch { continue; }
+        for (const f of entries) {
+          if (!f.endsWith(".meta.json")) continue;
+          const id = f.replace("agent-", "").replace(".meta.json", "");
+          const meta = readMetaFile(path.join(wfDir, f));
+          agents.push({ id, ...meta, workflowId: wf, lineCount: lineCountOf(path.join(wfDir, `agent-${id}.jsonl`)) });
+        }
+      }
+    } catch { /* no workflows dir */ }
+
     res.json(agents);
   } catch {
     res.json([]);

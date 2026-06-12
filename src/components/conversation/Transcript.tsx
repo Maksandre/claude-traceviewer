@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { agentMeta, fmtCost, fmtDur, fmtTime, modelColor, modelFamily, modelLabel } from "../../lib/format";
 import { Icons } from "../../lib/icons";
-import { Caret, UsageChips } from "../../lib/md";
-import type { NormAgent, NormBlock, NormMsg, NormToolResult } from "../../lib/normalize";
+import { Caret, CodeBlock, UsageChips } from "../../lib/md";
+import type { NormAgent, NormBlock, NormMsg, NormToolResult, NormWorkflow } from "../../lib/normalize";
 import { AskUserQuestionCard, BlockAnchor, MsgPermalink, TaskCreateCard, TaskGenericCard, TaskUpdateCard, ThinkingBlock, ToolCard, UserGroup, UserMessage, isUserTaskNotification, type TaskSnapshot } from "./blocks";
 
 // Each entry carries the source msg's uuid + the block's index inside
@@ -21,6 +21,9 @@ function entityLabelFor(b: NormBlock): string {
 }
 
 export interface ViewSettings { expandThinking: boolean; expandTools: boolean; }
+
+/** A Workflow tool call resolved to its run plus the subagents it spawned. */
+export type WorkflowSpawn = { workflow: NormWorkflow; agents: NormAgent[] };
 
 export interface Group {
   kind: "user" | "user-tasknote" | "assistant";
@@ -112,10 +115,11 @@ function blockMatchesQuery(
   return false;
 }
 
-function Blocks({ entries, getResult, agentsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, permalinks = true, toolFilter }: {
+function Blocks({ entries, getResult, agentsByToolUse, workflowsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, permalinks = true, toolFilter }: {
   entries: BlockEntry[];
   getResult: (id: string) => NormToolResult | undefined;
   agentsByToolUse: Record<string, NormAgent>;
+  workflowsByToolUse?: Record<string, WorkflowSpawn>;
   onOpenAgent: (id: string) => void;
   settings: ViewSettings;
   taskStateById: Map<string, TaskSnapshot[]>;
@@ -167,6 +171,7 @@ function Blocks({ entries, getResult, agentsByToolUse, onOpenAgent, settings, ta
           <AgentSpawnCard
             block={b}
             agent={agent}
+            agentsByToolUse={agentsByToolUse}
             onOpen={onOpenAgent}
             settings={settings}
             query={query}
@@ -174,6 +179,17 @@ function Blocks({ entries, getResult, agentsByToolUse, onOpenAgent, settings, ta
           />,
         ));
         return;
+      }
+      if (b.name === "Workflow") {
+        const spawn = b.id ? workflowsByToolUse?.[b.id] : undefined;
+        if (spawn) {
+          rendered.push(wrap(i, b, msgUuid, idxInMsg,
+            <WorkflowCard block={b} spawn={spawn} agentsByToolUse={agentsByToolUse} onOpen={onOpenAgent} settings={settings} query={query} forceExpandedAgents={forceExpandedAgents} />,
+          ));
+          return;
+        }
+        // No run resolved yet (e.g. still launching) — fall through to the
+        // generic tool card so the script is at least visible.
       }
       const tasks = b.id ? taskStateById.get(b.id) || [] : [];
       if (b.name === "TaskCreate") { rendered.push(wrap(i, b, msgUuid, idxInMsg, <TaskCreateCard block={b} result={b.id ? getResult(b.id) : undefined} tasks={tasks} />)); return; }
@@ -200,9 +216,10 @@ function Blocks({ entries, getResult, agentsByToolUse, onOpenAgent, settings, ta
 // filtering by a query and this subagent's transcript contained a hit,
 // `forceExpanded` is set so the card opens automatically — and we pass the
 // query into the inner Transcript so it filters to just the matching lines.
-function AgentSpawnCard({ block, agent, onOpen, settings, query, forceExpanded }: {
+function AgentSpawnCard({ block, agent, agentsByToolUse, onOpen, settings, query, forceExpanded }: {
   block: NormBlock;
   agent?: NormAgent;
+  agentsByToolUse?: Record<string, NormAgent>;
   onOpen: (id: string) => void;
   settings?: ViewSettings;
   query?: string;
@@ -294,7 +311,7 @@ function AgentSpawnCard({ block, agent, onOpen, settings, query, forceExpanded }
           <Transcript
             messages={agent.messages}
             toolResults={agent.toolResults}
-            agentsByToolUse={{}}
+            agentsByToolUse={agentsByToolUse || {}}
             onOpenAgent={onOpen}
             settings={settings}
             query={query}
@@ -306,10 +323,106 @@ function AgentSpawnCard({ block, agent, onOpen, settings, query, forceExpanded }
   );
 }
 
-function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, extraClass = "", permalinks = true, toolFilter }: {
+// A Workflow tool call: an orchestration that fanned out a set of subagents.
+// Renders the run (name + summary + roll-up stats) and, when expanded, the
+// list of spawned subagents — each an AgentSpawnCard reusing the same inline
+// transcript + open-in-drawer affordances as a direct Agent/Task spawn.
+function WorkflowCard({ block, spawn, agentsByToolUse, onOpen, settings, query, forceExpandedAgents }: {
+  block: NormBlock;
+  spawn: WorkflowSpawn;
+  agentsByToolUse?: Record<string, NormAgent>;
+  onOpen: (id: string) => void;
+  settings: ViewSettings;
+  query?: string;
+  forceExpandedAgents?: Set<string>;
+}) {
+  const { workflow, agents } = spawn;
+  const anyForced = !!forceExpandedAgents && agents.some(a => forceExpandedAgents.has(a.id));
+  const [open, setOpen] = useState(false);
+  const expanded = open || anyForced;
+  const col = `oklch(0.70 0.12 285)`; // workflow hue — distinct from agent hues
+  const totalCost = agents.reduce((s, a) => s + a.usage.cost, 0);
+  const totalTools = agents.reduce((s, a) => s + Object.values(a.toolCounts).reduce((x, y) => x + y, 0), 0);
+  const durationMs = (() => {
+    const starts = agents.map(a => a.startedAt).filter(Boolean).sort();
+    const ends = agents.map(a => a.endedAt).filter(Boolean).sort();
+    if (!starts.length || !ends.length) return 0;
+    return new Date(ends[ends.length - 1]).getTime() - new Date(starts[0]).getTime();
+  })();
+  const title = workflow.name || "workflow";
+  const script = typeof block.input?.script === "string" ? block.input.script : "";
+  return (
+    <div className={"agent-spawn workflow-spawn fade-in " + (expanded ? "is-expanded " : "")} style={{ "--ac": col } as React.CSSProperties}>
+      <div
+        className="agent-spawn-row"
+        role="button"
+        tabIndex={0}
+        onClick={() => setOpen(o => !o)}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setOpen(o => !o); } }}
+      >
+        <span className="agent-spawn-ic" style={{ color: col, background: `color-mix(in oklch, ${col} 16%, transparent)` }}>
+          <Icons.workflow size={16} />
+        </span>
+        <div className="agent-spawn-main">
+          <div className="agent-spawn-top">
+            <span className="agent-spawn-type" style={{ color: col }}>{title}</span>
+            <span className="agent-spawn-arrow">Workflow · {agents.length} agent{agents.length === 1 ? "" : "s"}</span>
+          </div>
+          {workflow.summary ? <div className="agent-spawn-desc">{workflow.summary}</div> : null}
+          <div className="agent-spawn-stats">
+            <span><Icons.agent size={11} /> {agents.length} spawned</span>
+            <span><Icons.terminal size={11} /> {totalTools} tools</span>
+            {durationMs > 0 ? <span><Icons.clock size={11} /> {fmtDur(durationMs)}</span> : null}
+            <span style={{ color: "var(--accent)" }}>{fmtCost(totalCost)}</span>
+          </div>
+        </div>
+        {agents.length > 0 ? (
+          <div className="agent-spawn-actions" onClick={(e) => e.stopPropagation()}>
+            <button
+              type="button"
+              className="agent-spawn-expand"
+              onClick={() => setOpen(o => !o)}
+              disabled={anyForced}
+              aria-expanded={expanded}
+              title={anyForced ? "Auto-expanded — clear the search to hide" : expanded ? "Hide agents" : "Show spawned agents"}
+            >
+              <Caret open={expanded} />
+              <span>{expanded ? "hide" : "expand"}</span>
+            </button>
+          </div>
+        ) : null}
+      </div>
+      {expanded ? (
+        <div className="workflow-spawn-agents">
+          {agents.map(a => (
+            <AgentSpawnCard
+              key={a.id}
+              block={{ type: "tool_use", name: "Task", input: { subagent_type: a.agentType, description: a.description } }}
+              agent={a}
+              agentsByToolUse={agentsByToolUse}
+              onOpen={onOpen}
+              settings={settings}
+              query={query}
+              forceExpanded={!!forceExpandedAgents?.has(a.id)}
+            />
+          ))}
+          {script ? (
+            <details className="workflow-script">
+              <summary>workflow script</summary>
+              <CodeBlock code={script} max={500} />
+            </details>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AssistantGroup({ group, getResult, agentsByToolUse, workflowsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, extraClass = "", permalinks = true, toolFilter }: {
   group: Group;
   getResult: (id: string) => NormToolResult | undefined;
   agentsByToolUse: Record<string, NormAgent>;
+  workflowsByToolUse?: Record<string, WorkflowSpawn>;
   onOpenAgent: (id: string) => void;
   settings: ViewSettings;
   taskStateById: Map<string, TaskSnapshot[]>;
@@ -349,7 +462,7 @@ function AssistantGroup({ group, getResult, agentsByToolUse, onOpenAgent, settin
           {usage.cost > 0 ? <span className="msg-cost tnum">{fmtCost(usage.cost)}</span> : null}
         </div>
         <div className="msg-blocks">
-          <Blocks entries={allBlocks} getResult={getResult} agentsByToolUse={agentsByToolUse} onOpenAgent={onOpenAgent} settings={settings} taskStateById={taskStateById} query={query} forceExpandedAgents={forceExpandedAgents} permalinks={permalinks} toolFilter={toolFilter} />
+          <Blocks entries={allBlocks} getResult={getResult} agentsByToolUse={agentsByToolUse} workflowsByToolUse={workflowsByToolUse} onOpenAgent={onOpenAgent} settings={settings} taskStateById={taskStateById} query={query} forceExpandedAgents={forceExpandedAgents} permalinks={permalinks} toolFilter={toolFilter} />
         </div>
       </div>
     </div>
@@ -556,10 +669,11 @@ export function useTranscriptModel({ messages, toolResults, agentsByToolUse, que
 
 // One rendered transcript row. Exported so the virtualized renderer in
 // ConversationView can call it for each Virtuoso item.
-export function GroupRow({ g, model, agentsByToolUse, onOpenAgent, settings, query, permalinks = true, toolFilter }: {
+export function GroupRow({ g, model, agentsByToolUse, workflowsByToolUse, onOpenAgent, settings, query, permalinks = true, toolFilter }: {
   g: Group;
   model: TranscriptModel;
   agentsByToolUse: Record<string, NormAgent>;
+  workflowsByToolUse?: Record<string, WorkflowSpawn>;
   onOpenAgent: (id: string) => void;
   settings: ViewSettings;
   query: string;
@@ -578,6 +692,7 @@ export function GroupRow({ g, model, agentsByToolUse, onOpenAgent, settings, que
       group={g}
       getResult={model.getResult}
       agentsByToolUse={agentsByToolUse}
+      workflowsByToolUse={workflowsByToolUse}
       onOpenAgent={onOpenAgent}
       settings={settings}
       taskStateById={model.taskStateById}
