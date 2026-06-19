@@ -3,6 +3,7 @@ services:
     build: .
     image: debrief
     container_name: debrief
+    restart: unless-stopped
     ports:
       - "3099:3099"
     volumes:
