@@ -1,5 +1,18 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <path fill="#050505" d="M32 6 56 18 32 30 8 18 32 6Z"/>
-  <path fill="#050505" d="M8 24 29 34.5V58L8 47.5V24Z"/>
-  <path fill="#050505" d="M56 24 35 34.5V58L56 47.5V24Z"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="10 10 44 46" preserveAspectRatio="none" role="img" aria-label="Debrief">
+  <defs>
+    <mask id="dbf-favicon-mask" maskUnits="userSpaceOnUse">
+      <rect width="64" height="64" fill="#000"/>
+      <g fill="#fff">
+        <polygon points="32,10 54,21 32,32 10,21"/>
+        <polygon points="10,25 30,35 30,56 10,46"/>
+        <polygon points="34,35 54,25 54,46 34,56"/>
+      </g>
+      <g fill="#000" font-family="Arial Black, Arial, Helvetica, sans-serif" font-weight="900">
+        <text font-size="19" transform="matrix(.86 -.42 .86 .42 32 23)">D</text>
+        <text font-size="19" transform="matrix(.82 .38 0 1 14 46)">B</text>
+        <text font-size="19" transform="matrix(.82 -.38 0 1 37 46)">F</text>
+      </g>
+    </mask>
+  </defs>
+  <rect width="64" height="64" fill="#050505" mask="url(#dbf-favicon-mask)"/>
 </svg>
