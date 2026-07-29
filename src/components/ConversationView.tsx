@@ -4,6 +4,8 @@ import type { NormAgent, NormTrace, NormWorkflow } from "../lib/normalize";
 import { contextWindow, fmtCost, fmtDur, fmtTokens, modelColor, modelLabel } from "../lib/format";
 import { Icons } from "../lib/icons";
 import { useSearchHighlight } from "../lib/searchHighlight";
+import { CopyIdButton } from "./CopyIdButton";
+import { EffortBadge } from "./EffortBadge";
 import { ToolFilterStrip } from "./ToolFilterStrip";
 import {
   ConversationEnd,
@@ -49,6 +51,8 @@ function ConvHeader({ trace, toolFilter, onToggleTool, onClearTool }: {
             </span>
           ) : null}
           {s.durationMs > 0 ? <span><Icons.clock size={12} />{fmtDur(s.durationMs)}</span> : null}
+          {s.effort ? <EffortBadge effort={s.effort} /> : null}
+          <CopyIdButton id={s.id} label="copy conversation id" title="Copy this conversation's id to the clipboard" />
         </div>
       </div>
       <div className="conv-head-stats">

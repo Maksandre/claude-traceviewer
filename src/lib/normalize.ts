@@ -22,6 +22,8 @@ export interface NormMsg {
   stopReason?: string | null;
   attributionSkill?: string;
   onlyResults?: boolean;
+  /** Reasoning effort this assistant turn ran at; "" when the trace predates it. */
+  effort?: string;
 }
 
 export interface NormToolResult {
@@ -35,6 +37,9 @@ export interface NormAgent {
   agentType: string;
   description: string;
   model: string;
+  /** Reasoning effort the agent ran at (the dominant one across its turns);
+   * "" when the trace records don't carry it. */
+  effort: string;
   prompt: string;
   startedAt: string;
   endedAt: string;
@@ -69,10 +74,14 @@ export interface NormWorkflow {
 }
 
 export interface NormSession {
+  /** The conversation id — the session uuid Claude Code names the .jsonl after. */
+  id: string;
   project: string;
   attributionSkill: string;
   gitBranch: string;
   models: string[];
+  /** Reasoning effort the main agent ran at (dominant across its turns). */
+  effort: string;
   durationMs: number;
   startedAt: string;
   endedAt: string;
@@ -132,9 +141,24 @@ interface MergedAssistant {
   uuid: string;
   ts: string;
   model: string;
+  effort: string;
   content: ContentBlock[];
   usage: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
   stopReason?: string | null;
+}
+
+/** The effort a set of turns ran at: the most frequent value, since a session
+ * can change effort mid-run and one badge has to stand for the whole agent. */
+export function dominantEffort(messages: NormMsg[]): string {
+  const counts = new Map<string, number>();
+  for (const m of messages) {
+    if (m.role !== "assistant" || !m.effort) continue;
+    counts.set(m.effort, (counts.get(m.effort) || 0) + 1);
+  }
+  let best = "";
+  let bestN = 0;
+  for (const [effort, n] of counts) if (n > bestN) { best = effort; bestN = n; }
+  return best;
 }
 
 function buildMergedAssistants(records: TraceRecord[]): Map<string, MergedAssistant> {
@@ -144,10 +168,11 @@ function buildMergedAssistants(records: TraceRecord[]): Map<string, MergedAssist
     const id = rec.message.id;
     let entry = map.get(id);
     if (!entry) {
-      entry = { uuid: rec.uuid || id, ts: rec.timestamp || "", model: rec.message.model || "", content: [], usage: {}, stopReason: null };
+      entry = { uuid: rec.uuid || id, ts: rec.timestamp || "", model: rec.message.model || "", effort: rec.effort || "", content: [], usage: {}, stopReason: null };
       map.set(id, entry);
     }
     if (rec.message.model) entry.model = rec.message.model;
+    if (rec.effort) entry.effort = rec.effort;
     if (rec.message.usage?.output_tokens != null) entry.usage = rec.message.usage;
     if (rec.message.stop_reason) entry.stopReason = rec.message.stop_reason;
     const content = rec.message.content;
@@ -316,6 +341,7 @@ function normalizeRecords(records: TraceRecord[]): {
         usage: u,
         stopReason: entry.stopReason,
         attributionSkill: undefined,
+        effort: entry.effort,
       });
       continue;
     }
@@ -342,13 +368,14 @@ function formatWorkflowResult(r: unknown): string {
   return [lines.join("\n"), summary].filter(Boolean).join("\n\n");
 }
 
-function readMeta(meta: any): { agentType?: string; description?: string; prompt?: string; model?: string; toolUseId?: string } {
+function readMeta(meta: any): { agentType?: string; description?: string; prompt?: string; model?: string; effort?: string; toolUseId?: string } {
   if (!meta) return {};
   return {
     agentType: meta.agentType || meta.subagent_type,
     description: meta.description,
     prompt: meta.prompt,
     model: meta.model,
+    effort: meta.effort,
     toolUseId: meta.toolUseId || meta.tool_use_id,
   };
 }
@@ -455,6 +482,7 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
         agentType: meta.agentType || data?.agentType || "agent",
         description: meta.description || "",
         model: modelStr,
+        effort: meta.effort || dominantEffort(messages),
         prompt: promptText,
         startedAt: start,
         endedAt: end,
@@ -539,10 +567,12 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
 
   return {
     session: {
+      id: session || sessionInfo?.sessionId || "",
       project: sessionInfo?.cwd || project,
       attributionSkill,
       gitBranch: sessionInfo?.gitBranch || "",
       models: [...mainNorm.modelsSeen],
+      effort: dominantEffort(mainNorm.messages),
       durationMs,
       startedAt,
       endedAt,

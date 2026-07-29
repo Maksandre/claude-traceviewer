@@ -2,6 +2,8 @@ import { useMemo, useState } from "react";
 import { agentColor, contextWindow, fmtClock, fmtCost, fmtDur, fmtDurShort, fmtTime, fmtTokens, fmtTokensShort, modelColor, modelLabel, toolColor } from "../lib/format";
 import { Icons, toolIcon } from "../lib/icons";
 import { Bar } from "../lib/md";
+import { copyText } from "../lib/clipboard";
+import { EffortBadge } from "./EffortBadge";
 import { ToolName } from "./ToolName";
 import type { NormTrace } from "../lib/normalize";
 import { analyzeCache } from "../lib/cacheInsights";
@@ -374,26 +376,6 @@ function shortenPath(p: string): { head: string; tail: string } {
 
 const FILE_TOOLS = new Set(["Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "NotebookRead", "LS"]);
 
-async function copyText(text: string): Promise<boolean> {
-  try {
-    if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch { /* fall through */ }
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    const ok = document.execCommand("copy");
-    document.body.removeChild(ta);
-    return ok;
-  } catch { return false; }
-}
-
 function ToolDetailRow({ fullKey, displayKey, count, max, color, copyable }: {
   fullKey: string;
   displayKey: string;
@@ -537,9 +519,9 @@ function AgentGantt({ trace, onOpen }: { trace: NormTrace; onOpen: (id: string) 
   const rows = [
     { id: null as string | null, name: "main agent", model: trace.session.models[0] || "", u: trace.main.usage,
       tools: Object.values(trace.main.toolCounts).reduce((a, b) => a + b, 0), dur: trace.session.durationMs,
-      s: 0, e: span, col: "var(--accent)", desc: "main conversation", isMain: true },
+      s: 0, e: span, col: "var(--accent)", desc: "main conversation", isMain: true, effort: trace.session.effort },
     ...trace.agents.map(a => ({
-      id: a.id as string | null, name: a.agentType, model: a.model, u: a.usage,
+      id: a.id as string | null, name: a.agentType, model: a.model, u: a.usage, effort: a.effort,
       tools: Object.values(a.toolCounts).reduce((x, y) => x + y, 0), dur: a.durationMs,
       s: a.startedAt ? new Date(a.startedAt).getTime() - start : 0,
       e: a.endedAt ? new Date(a.endedAt).getTime() - start : 0,
@@ -577,6 +559,7 @@ function AgentGantt({ trace, onOpen }: { trace: NormTrace; onOpen: (id: string) 
               <span className="at-model" style={{ color: modelColor(r.model) }}>
                 <span className="ag-full">{modelLabel(r.model)}</span>
                 <span className="ag-short">{modelLabel(r.model).split(" ")[0]}</span>
+                <EffortBadge effort={r.effort} compact />
               </span>
               <span className="r tnum at-tok">
                 <span className="ag-full">{fmtTokens(totTok)}</span>

@@ -42,6 +42,9 @@ export interface TraceRecord {
   promptId?: string;
   sessionId?: string;
   slug?: string;
+  /** Reasoning effort the assistant turn ran at ("low" … "max"). Written on
+   * assistant records only; absent on older traces. */
+  effort?: string;
 
   // user / assistant
   message?: {

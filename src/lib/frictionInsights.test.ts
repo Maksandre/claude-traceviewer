@@ -17,7 +17,7 @@ function trace(opts: {
 }): NormTrace {
   const u = { input: 0, output: 0, cw: 0, cr: 0, cost: 0 };
   return {
-    session: { project: "", attributionSkill: "", gitBranch: "", models: [], durationMs: 0, startedAt: "", endedAt: "" },
+    session: { id: "", project: "", attributionSkill: "", effort: "", gitBranch: "", models: [], durationMs: 0, startedAt: "", endedAt: "" },
     main: {
       messages: opts.mainMsgs ?? [],
       toolResults: opts.mainResults ?? {},

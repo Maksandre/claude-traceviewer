@@ -29,7 +29,7 @@ Cost, token volume, wall-clock duration, peak context vs the model's window, and
 
 ![Agents](docs/img/agents.png)
 
-If the session used subagents, the delegation tree is shown with each agent's prompt, model, tool calls, duration, and cost. Click a row to open that agent's transcript.
+If the session used subagents, the delegation tree is shown with each agent's prompt, model, reasoning effort, tool calls, duration, and cost. Click a row to open that agent's transcript.
 
 ## Run
 
