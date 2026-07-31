@@ -133,9 +133,9 @@ function Blocks({ entries, getResult, agentsByToolUse, workflowsByToolUse, onOpe
   const hasToolFilter = !!toolFilter && toolFilter.size > 0;
   let hidden = 0;
   const rendered: React.ReactNode[] = [];
-  // Wraps each rendered block with the hover-revealed permalink. Subagent
-  // transcripts pass permalinks={false}: the URLs they'd produce can't be
-  // resolved by the main-view scroll lookup yet.
+  // Wraps each rendered block with the hover-revealed copy-id button.
+  // Subagent transcripts pass permalinks={false}: their blocks belong to
+  // the agent's own transcript, not the main session the id would name.
   const wrap = (key: number | string, b: NormBlock, msgUuid: string, idxInMsg: number, node: React.ReactNode): React.ReactNode => {
     if (!permalinks) return <div key={key}>{node}</div>;
     const blockId = b.id || `${msgUuid}:${idxInMsg}`;

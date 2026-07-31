@@ -68,7 +68,7 @@ function App() {
     selectTarget(uuid, null);
     setView("conversation");
   }, [selectTarget]);
-  const permalinkApi = useMemo(() => ({ selectTarget }), [selectTarget]);
+  const permalinkApi = useMemo(() => ({ sessionId: selectedSession }), [selectedSession]);
   const [query, setQuery] = useState("");
   // Search runs when the user presses Enter in the Toolbar. We wrap the
   // state update in a transition so React can keep the input painted while
