@@ -1,5 +1,5 @@
 import type { ContentBlock, TraceRecord } from "../types";
-import { costFor, modelFamily } from "./format";
+import { costFor, MODEL_FAMILIES, modelFamily } from "./format";
 import type { ModelFamily } from "./format";
 
 export interface NormBlock {
@@ -88,6 +88,13 @@ export interface NormSession {
   durationMs: number;
   startedAt: string;
   endedAt: string;
+  /** Which CLI wrote the trace; drives provider-specific UI (no Agents tab
+   * for Codex, provider badge, …). Absent on traces normalized before this
+   * field existed — treat as "claude". */
+  provider?: "claude" | "codex";
+  /** Context window the trace itself reported (Codex records it per turn);
+   * preferred over the per-family constant when present. */
+  contextWindow?: number;
 }
 
 export interface NormStats {
@@ -113,10 +120,37 @@ export interface NormTrace {
   stats: NormStats;
 }
 
-const EMPTY_USAGE = () => ({ input: 0, output: 0, cw: 0, cr: 0, cost: 0 });
+export const EMPTY_USAGE = () => ({ input: 0, output: 0, cw: 0, cr: 0, cost: 0 });
 
-function addUsage(a: { input: number; output: number; cw: number; cr: number; cost: number }, b: { input: number; output: number; cw: number; cr: number; cost: number }) {
+export function addUsage(a: { input: number; output: number; cw: number; cr: number; cost: number }, b: { input: number; output: number; cw: number; cr: number; cost: number }) {
   a.input += b.input; a.output += b.output; a.cw += b.cw; a.cr += b.cr; a.cost += b.cost;
+}
+
+/** Per-family token/cost roll-up across message lists. Built from
+ * MODEL_FAMILIES so a new family can't silently miss a bucket. */
+export function buildModelStats(messageLists: NormMsg[][]): {
+  modelMix: Record<ModelFamily, number>;
+  modelStats: { family: ModelFamily; tokens: number; cost: number }[];
+} {
+  const familyAcc = Object.fromEntries(
+    MODEL_FAMILIES.map(f => [f, { tokens: 0, cost: 0 }])
+  ) as Record<ModelFamily, { tokens: number; cost: number }>;
+  for (const msgs of messageLists) {
+    for (const m of msgs) {
+      if (m.role !== "assistant") continue;
+      const fam = modelFamily(m.model);
+      familyAcc[fam].tokens += m.usage.input + m.usage.output + m.usage.cw + m.usage.cr;
+      familyAcc[fam].cost += m.usage.cost;
+    }
+  }
+  const modelMix = Object.fromEntries(
+    MODEL_FAMILIES.map(f => [f, familyAcc[f].tokens])
+  ) as Record<ModelFamily, number>;
+  const modelStats = (Object.entries(familyAcc) as [ModelFamily, { tokens: number; cost: number }][])
+    .filter(([, v]) => v.tokens > 0)
+    .map(([family, v]) => ({ family, tokens: v.tokens, cost: v.cost }))
+    .sort((a, b) => b.cost - a.cost);
+  return { modelMix, modelStats };
 }
 
 function extractText(content: ContentBlock["content"] | string | undefined): string {
@@ -543,29 +577,7 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
   addUsage(allTotals, mainNorm.usage);
   for (const a of agents) addUsage(allTotals, a.usage);
 
-  const familyAcc: Record<ModelFamily, { tokens: number; cost: number }> = {
-    fable: { tokens: 0, cost: 0 }, opus: { tokens: 0, cost: 0 },
-    sonnet: { tokens: 0, cost: 0 }, haiku: { tokens: 0, cost: 0 },
-  };
-  const accModels = (msgs: NormMsg[]) => {
-    for (const m of msgs) {
-      if (m.role !== "assistant") continue;
-      const fam = modelFamily(m.model);
-      familyAcc[fam].tokens += m.usage.input + m.usage.output + m.usage.cw + m.usage.cr;
-      familyAcc[fam].cost += m.usage.cost;
-    }
-  };
-  accModels(mainNorm.messages);
-  for (const a of agents) accModels(a.messages);
-
-  const modelMix: Record<ModelFamily, number> = {
-    fable: familyAcc.fable.tokens, opus: familyAcc.opus.tokens,
-    sonnet: familyAcc.sonnet.tokens, haiku: familyAcc.haiku.tokens,
-  };
-  const modelStats = (Object.entries(familyAcc) as [ModelFamily, { tokens: number; cost: number }][])
-    .filter(([, v]) => v.tokens > 0)
-    .map(([family, v]) => ({ family, tokens: v.tokens, cost: v.cost }))
-    .sort((a, b) => b.cost - a.cost);
+  const { modelMix, modelStats } = buildModelStats([mainNorm.messages, ...agents.map(a => a.messages)]);
 
   const toolFreq: Record<string, number> = {};
   for (const [k, v] of Object.entries(mainNorm.toolCounts)) toolFreq[k] = (toolFreq[k] || 0) + v;
@@ -594,6 +606,7 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
       durationMs,
       startedAt,
       endedAt,
+      provider: "claude",
     },
     main: {
       messages: mainNorm.messages,

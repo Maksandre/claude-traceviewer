@@ -4,6 +4,7 @@ import { Icons } from "../../lib/icons";
 import { Caret, CodeBlock, UsageChips } from "../../lib/md";
 import type { NormAgent, NormBlock, NormMsg, NormToolResult, NormWorkflow } from "../../lib/normalize";
 import { AskUserQuestionCard, AttachmentGroup, BlockAnchor, MsgPermalink, TaskCreateCard, TaskGenericCard, TaskUpdateCard, ThinkingBlock, ToolCard, UserGroup, UserMessage, isUserTaskNotification, type TaskSnapshot } from "./blocks";
+import { ApplyPatchCard } from "./ApplyPatchCard";
 
 // Each entry carries the source msg's uuid + the block's index inside
 // that msg. We need both so non-tool blocks (text/thinking — which have
@@ -201,6 +202,10 @@ function Blocks({ entries, getResult, agentsByToolUse, workflowsByToolUse, onOpe
         }
         // No run resolved yet (e.g. still launching) — fall through to the
         // generic tool card so the script is at least visible.
+      }
+      if (b.name === "apply_patch") {
+        rendered.push(wrap(i, b, msgUuid, idxInMsg, <ApplyPatchCard block={b} result={b.id ? getResult(b.id) : undefined} defaultOpen={settings.expandTools} />));
+        return;
       }
       const tasks = b.id ? taskStateById.get(b.id) || [] : [];
       if (b.name === "TaskCreate") { rendered.push(wrap(i, b, msgUuid, idxInMsg, <TaskCreateCard block={b} result={b.id ? getResult(b.id) : undefined} tasks={tasks} />)); return; }

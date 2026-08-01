@@ -1,3 +1,5 @@
+export type Provider = "claude" | "codex";
+
 export interface SessionInfo {
   id: string;
   file: string;
@@ -6,6 +8,8 @@ export interface SessionInfo {
   lineCount: number;
   slug: string;
   preview: string;
+  /** Which CLI wrote the session. Absent on older server responses → claude. */
+  provider?: Provider;
 }
 
 export interface ProjectMeta {
@@ -16,6 +20,11 @@ export interface ProjectMeta {
    * the encoded `name` replaces every "/" with "-" and is ambiguous for
    * directory names that legitimately contain dashes. */
   cwd?: string;
+  /** CLIs that have sessions in this project (a directory can hold both). */
+  providers?: Provider[];
+  /** Per-provider session counts; sessionCount is their sum. */
+  claudeCount?: number;
+  codexCount?: number;
 }
 
 export interface ContentBlock {

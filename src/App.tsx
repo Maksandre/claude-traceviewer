@@ -7,7 +7,10 @@ import { AgentsView } from "./components/AgentsView";
 import { StatsView } from "./components/StatsView";
 import { AgentDrawer } from "./components/AgentDrawer";
 import type { ProjectMeta, SessionInfo, TraceRecord } from "./types";
+import type { CodexRecord } from "./codex-types";
+import { isCodexRecords } from "./codex-types";
 import { fetchNormalizedTrace, type NormTrace } from "./lib/normalize";
+import { normalizeCodexTrace } from "./lib/normalizeCodex";
 import { PermalinkContext } from "./lib/permalinkCtx";
 import "./App.css";
 
@@ -141,7 +144,15 @@ function App() {
     return data.map((it: any) =>
       typeof it === "string"
         ? { name: it, sessionCount: 0, mtime: 0 }
-        : { name: String(it?.name || ""), sessionCount: Number(it?.sessionCount || 0), mtime: Number(it?.mtime || 0), cwd: typeof it?.cwd === "string" ? it.cwd : undefined }
+        : {
+            name: String(it?.name || ""),
+            sessionCount: Number(it?.sessionCount || 0),
+            mtime: Number(it?.mtime || 0),
+            cwd: typeof it?.cwd === "string" ? it.cwd : undefined,
+            providers: Array.isArray(it?.providers) ? it.providers : undefined,
+            claudeCount: typeof it?.claudeCount === "number" ? it.claudeCount : undefined,
+            codexCount: typeof it?.codexCount === "number" ? it.codexCount : undefined,
+          }
     ).filter((p) => p.name);
   };
 
@@ -177,6 +188,9 @@ function App() {
             const b = next[next.length - 1];
             if (a === b) return prev;
             if (a && b && a.uuid && a.uuid === b.uuid && a.timestamp === b.timestamp) return prev;
+            // Codex records have no uuid — the timestamp of the tail record
+            // is the only cheap identity to compare.
+            if (a && b && !a.uuid && !b.uuid && a.timestamp && a.timestamp === b.timestamp) return prev;
           }
           return next;
         });
@@ -234,11 +248,17 @@ function App() {
     return () => clearInterval(id);
   }, [hasOpenSubagent, autoRefresh]);
 
-  // normalize whenever records change
+  // normalize whenever records change; the record shape (not a threaded
+  // provider flag) picks the normalizer, so deep links work without knowing
+  // the provider up front
   useEffect(() => {
     let cancelled = false;
     if (!selectedProject || !selectedSession || records.length === 0) {
       setTrace(null);
+      return;
+    }
+    if (isCodexRecords(records)) {
+      setTrace(normalizeCodexTrace(selectedSession, records as unknown as CodexRecord[]));
       return;
     }
     fetchNormalizedTrace(selectedProject, selectedSession, records).then(t => {
@@ -261,11 +281,14 @@ function App() {
     const last = msgs[msgs.length - 1];
     if (last.role === "user") return true;
     const s = last.stopReason;
-    return !(s === "end_turn" || s === "stop_sequence" || s === "max_tokens");
+    return !(s === "end_turn" || s === "stop_sequence" || s === "max_tokens" || s === "aborted");
   }, [trace]);
   const drawerAgent = useMemo(() => trace?.agents.find(a => a.id === drawerId) || null, [trace, drawerId]);
   const agentCount = trace?.agents.length || 0;
   const hasSession = !!selectedSession;
+  // Codex has no subagent concept — the Agents tab would always be empty.
+  const isCodexSession = trace?.session.provider === "codex";
+  const effectiveView = isCodexSession && view === "agents" ? "conversation" : view;
 
   return (
     <PermalinkContext.Provider value={permalinkApi}>
@@ -296,9 +319,10 @@ function App() {
       {sidebarOpen ? <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} /> : null}
       <main className="main">
         <Toolbar
-          view={view}
+          view={effectiveView}
           onViewChange={setView}
           agentCount={agentCount}
+          hideAgents={isCodexSession}
           hasSession={hasSession}
           onRefresh={handleRefresh}
           refreshSpin={refreshSpin}
@@ -340,9 +364,9 @@ function App() {
             </div>
           ) : !trace ? (
             <div className="empty-state"><div>Loading trace…</div></div>
-          ) : view === "conversation" ? (
+          ) : effectiveView === "conversation" ? (
             <ConversationView trace={trace} query={effectiveQuery} onOpenAgent={setDrawerId} settings={settings} live={isWorking} targetMsg={targetMsg} targetBlock={targetBlock} />
-          ) : view === "agents" ? (
+          ) : effectiveView === "agents" ? (
             <AgentsView
               trace={trace}
               settings={settings}

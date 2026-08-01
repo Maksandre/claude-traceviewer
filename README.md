@@ -1,6 +1,6 @@
 # Debrief
 
-A local inspector for Claude Code sessions. Reads the `.jsonl` trace files Claude Code writes under `~/.claude/` and turns them into readable conversations plus analytics — cost, prompt-cache health, context-window headroom, where the time went, and where things went wrong.
+A local inspector for Claude Code and OpenAI Codex CLI sessions. Reads the `.jsonl` trace files Claude Code writes under `~/.claude/` (and Codex CLI writes under `~/.codex/`) and turns them into readable conversations plus analytics — cost, prompt-cache health, context-window headroom, where the time went, and where things went wrong.
 
 Useful when developing custom subagents and skills: the delegation tree, per-agent transcripts, prompts, tool calls, and per-agent spend are all visible side by side, and every insight links back to the exact message that produced it.
 
@@ -50,13 +50,17 @@ npm start                  # http://localhost:3099
 Docker:
 
 ```bash
-docker compose up          # http://localhost:3099 — mounts ~/.claude read-only
+docker compose up          # http://localhost:3099 — mounts ~/.claude and ~/.codex read-only
 ```
 
-Sessions are read from `~/.claude` by default. Override with the `CLAUDE_DIR` environment variable.
+Sessions are read from `~/.claude` and `~/.codex` by default. Override with the `CLAUDE_DIR` and `CODEX_DIR` environment variables.
+
+## Codex CLI sessions
+
+Sessions written by [OpenAI Codex CLI](https://github.com/openai/codex) (`~/.codex/sessions/`) appear in the same project list — a Codex session run in the same directory as your Claude Code sessions lands in the same project entry, tagged with a `codex` badge. Transcripts render with the same tool cards (`exec_command` as a terminal call, `apply_patch` as per-file change chips), reasoning summaries when Codex recorded them (raw reasoning is encrypted at rest), token/cost stats, and live refresh. Codex has no subagent concept, so the Agents tab is hidden for those sessions.
 
 ## Cost numbers
 
-Costs are **notional**: every session is priced as if the tokens were billed at the public Anthropic API rates, regardless of how you actually pay. If you're on a Claude Pro/Max subscription, no money was charged per token — the figure shown is what the same usage would have cost on the metered API, which is a useful proxy for comparing sessions, agents, and runs against each other.
+Costs are **notional**: every session is priced as if the tokens were billed at the public API rates, regardless of how you actually pay. If you're on a Claude Pro/Max or ChatGPT subscription, no money was charged per token — the figure shown is what the same usage would have cost on the metered API, which is a useful proxy for comparing sessions, agents, and runs against each other.
 
-Rates come from a bundled snapshot covering Opus, Sonnet, and Haiku 3 → 4.x. Bedrock and Vertex routing are not modeled.
+Rates come from a bundled snapshot covering Opus, Sonnet, and Haiku 3 → 4.x plus the GPT-5 family used by Codex CLI. Bedrock and Vertex routing are not modeled.

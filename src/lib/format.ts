@@ -63,10 +63,16 @@ export function relTime(iso?: string | null): string {
   return Math.floor(diff / day) + "d ago";
 }
 
-export type ModelFamily = "fable" | "opus" | "sonnet" | "haiku";
+export type ModelFamily = "fable" | "opus" | "sonnet" | "haiku" | "gpt5" | "gpt5-codex";
+
+export const MODEL_FAMILIES: ModelFamily[] = ["fable", "opus", "sonnet", "haiku", "gpt5", "gpt5-codex"];
 
 export function modelFamily(m?: string | null): ModelFamily {
   const s = m || "";
+  // OpenAI ids (Codex CLI sessions) before the Claude branches — a Claude id
+  // never contains "gpt", so the order only matters for clarity.
+  if (s.includes("codex")) return "gpt5-codex";
+  if (s.startsWith("gpt")) return "gpt5";
   if (s.includes("fable")) return "fable";
   if (s.includes("opus")) return "opus";
   if (s.includes("haiku")) return "haiku";
@@ -74,14 +80,30 @@ export function modelFamily(m?: string | null): ModelFamily {
 }
 
 /* Context window (max input tokens) by model. Fable 5, Opus 4.6+, and
-   Sonnet 4.6 are 1M; Haiku is 200K. Once a session's per-call context nears
-   this, the harness compacts. */
+   Sonnet 4.6 are 1M; Haiku is 200K; GPT-5 is 272K. Codex traces also record
+   the window they actually ran with — prefer that observed value when the
+   trace carries one (NormSession.contextWindow). */
 export function contextWindow(m?: string | null): number {
-  return modelFamily(m) === "haiku" ? 200_000 : 1_000_000;
+  const fam = modelFamily(m);
+  if (fam === "haiku") return 200_000;
+  if (fam === "gpt5" || fam === "gpt5-codex") return 272_000;
+  return 1_000_000;
+}
+
+/** Human name for a family — CSS var names stay kebab-case, labels don't. */
+export function familyLabel(fam: ModelFamily): string {
+  if (fam === "gpt5") return "GPT-5";
+  if (fam === "gpt5-codex") return "Codex";
+  return fam.charAt(0).toUpperCase() + fam.slice(1);
 }
 
 export function modelLabel(m?: string | null): string {
   const fam = modelFamily(m);
+  // OpenAI ids read best nearly verbatim: gpt-5.5 → "GPT-5.5",
+  // gpt-5.3-codex → "GPT-5.3 Codex".
+  if (fam === "gpt5" || fam === "gpt5-codex") {
+    return (m || "").replace(/^gpt/i, "GPT").replace(/-codex$/i, " Codex");
+  }
   const cap = fam.charAt(0).toUpperCase() + fam.slice(1);
   const match = (m || "").match(/(\d+(?:[-.]\d+)?)/);
   const ver = match?.[1];
@@ -100,6 +122,11 @@ const TOOL_CAT_MAP: Record<string, ToolCat> = {
   Bash: "exec", BashOutput: "exec", KillShell: "exec",
   Agent: "agent", Task: "agent", SendMessage: "agent", Workflow: "agent",
   WebFetch: "web", WebSearch: "web", ToolSearch: "web",
+  // Codex CLI tool names (snake_case)
+  exec_command: "exec", shell: "exec", write_stdin: "exec",
+  apply_patch: "write",
+  view_image: "read", read_file: "read", list_dir: "read",
+  web_search_call: "web", web_search: "web",
 };
 
 export function toolCat(name?: string | null): ToolCat {
@@ -158,12 +185,16 @@ interface PerTokenRates {
 
 const PRICING_BY_ID = pricingSnapshot as unknown as Record<string, PerTokenRates>;
 
-/* family-level fallback (USD per token), used when an id isn't in the snapshot */
+/* family-level fallback (USD per token), used when an id isn't in the snapshot.
+   OpenAI has no cache-write concept, so the gpt entries pin that rate to 0
+   (Codex usage always reports cw=0 anyway). */
 const FAMILY_FALLBACK: Record<ModelFamily, PerTokenRates> = {
   fable:  { input_cost_per_token: 10e-6, output_cost_per_token: 50e-6, cache_creation_input_token_cost: 12.5e-6,  cache_read_input_token_cost: 1.0e-6 },
   opus:   { input_cost_per_token: 15e-6, output_cost_per_token: 75e-6, cache_creation_input_token_cost: 18.75e-6, cache_read_input_token_cost: 1.5e-6 },
   sonnet: { input_cost_per_token:  3e-6, output_cost_per_token: 15e-6, cache_creation_input_token_cost:  3.75e-6, cache_read_input_token_cost: 0.30e-6 },
   haiku:  { input_cost_per_token:  1e-6, output_cost_per_token:  5e-6, cache_creation_input_token_cost:  1.25e-6, cache_read_input_token_cost: 0.10e-6 },
+  gpt5:         { input_cost_per_token: 1.25e-6, output_cost_per_token: 10e-6, cache_creation_input_token_cost: 0, cache_read_input_token_cost: 0.125e-6 },
+  "gpt5-codex": { input_cost_per_token: 1.25e-6, output_cost_per_token: 10e-6, cache_creation_input_token_cost: 0, cache_read_input_token_cost: 0.125e-6 },
 };
 
 function lookupRates(model: string | undefined | null): PerTokenRates {

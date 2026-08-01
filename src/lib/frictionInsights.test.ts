@@ -28,7 +28,7 @@ function trace(opts: {
     },
     agents: [],
     workflows: [],
-    stats: { totals: u, modelMix: { fable: 0, opus: 0, sonnet: 0, haiku: 0 }, toolFreq: {}, cacheRatio: 0, modelStats: [] },
+    stats: { totals: u, modelMix: { fable: 0, opus: 0, sonnet: 0, haiku: 0, gpt5: 0, "gpt5-codex": 0 }, toolFreq: {}, cacheRatio: 0, modelStats: [] },
   } as NormTrace;
 }
 

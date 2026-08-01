@@ -8,6 +8,8 @@ services:
       - "3099:3099"
     volumes:
       - ~/.claude:/data/.claude:ro
+      - ~/.codex:/data/.codex:ro
     environment:
       - CLAUDE_DIR=/data/.claude
+      - CODEX_DIR=/data/.codex
       - PORT=3099

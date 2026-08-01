@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { agentColor, contextWindow, fmtClock, fmtCost, fmtDur, fmtDurShort, fmtTime, fmtTokens, fmtTokensShort, modelColor, modelLabel, toolColor } from "../lib/format";
+import { agentColor, contextWindow, familyLabel, fmtClock, fmtCost, fmtDur, fmtDurShort, fmtTime, fmtTokens, fmtTokensShort, modelColor, modelLabel, toolColor } from "../lib/format";
 import { Icons, toolIcon } from "../lib/icons";
 import { Bar } from "../lib/md";
 import { copyText } from "../lib/clipboard";
@@ -276,7 +276,7 @@ function CostModels({ trace }: { trace: NormTrace }) {
       {rows.map(r => (
         <div key={r.family} className="cm-row">
           <span className="cm-dot" style={{ background: `var(--${r.family})` }} />
-          <span className="cm-name">{r.family[0].toUpperCase() + r.family.slice(1)}</span>
+          <span className="cm-name">{familyLabel(r.family)}</span>
           <span className="cm-bar"><span className="cm-bar-fill" style={{ width: (r.cost / totalCost * 100) + "%", background: `var(--${r.family})` }} /></span>
           <span className="cm-tok tnum">{fmtTokens(r.tokens)}</span>
           <span className="cm-cost tnum">{fmtCost(r.cost)}</span>
@@ -596,7 +596,9 @@ export function StatsView({ trace, onOpenAgent, onOpenMessage }: Props) {
   const sess = trace.session;
   const totTok = useMemo(() => s.totals.input + s.totals.output + s.totals.cw + s.totals.cr, [s.totals]);
   const toolUsage = useMemo(() => buildToolUsage(trace), [trace]);
-  const ctxWindow = contextWindow(sess.models[0]);
+  // Codex traces record the window they actually ran with; Claude traces
+  // fall back to the per-family constant.
+  const ctxWindow = sess.contextWindow || contextWindow(sess.models[0]);
   const peakCtx = trace.main.peakContext;
   const ctxPct = ctxWindow ? peakCtx / ctxWindow : 0;
   return (
