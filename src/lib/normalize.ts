@@ -3,19 +3,22 @@ import { costFor, modelFamily } from "./format";
 import type { ModelFamily } from "./format";
 
 export interface NormBlock {
-  type: "text" | "thinking" | "tool_use" | "image";
+  type: "text" | "thinking" | "tool_use" | "image" | "attachment";
   text?: string;
   thinking?: string;
   id?: string;
   name?: string;
   input?: Record<string, any>;
   source?: { type: string; media_type: string; data: string };
+  /** Payload of a harness-injected attachment record (skill listing,
+   * deferred-tool delta, nested memory, …). `attachment.type` discriminates. */
+  attachment?: Record<string, unknown>;
 }
 
 export interface NormMsg {
   uuid: string;
   ts: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "attachment";
   model: string;
   blocks: NormBlock[];
   usage: { input: number; output: number; cw: number; cr: number; cost: number };
@@ -204,6 +207,8 @@ function blockify(content: ContentBlock[]): NormBlock[] {
   const out: NormBlock[] = [];
   for (const b of content) {
     if (b.type === "text" && b.text) out.push({ type: "text", text: b.text });
+    // Claude Code strips thinking text from the JSONL (only the signature
+    // survives), so empty thinking blocks carry no content — drop them.
     else if (b.type === "thinking" && b.thinking) out.push({ type: "thinking", thinking: b.thinking });
     else if (b.type === "tool_use") out.push({ type: "tool_use", id: b.id, name: b.name, input: b.input });
     else if (b.type === "image") out.push({ type: "image", source: b.source });
@@ -252,6 +257,18 @@ function normalizeRecords(records: TraceRecord[]): {
     if (rec.timestamp) {
       if (!startedAt) startedAt = rec.timestamp;
       endedAt = rec.timestamp;
+    }
+
+    if (rec.type === "attachment" && rec.attachment) {
+      messages.push({
+        uuid: rec.uuid || `att-${messages.length}`,
+        ts: rec.timestamp || "",
+        role: "attachment",
+        model: "",
+        blocks: [{ type: "attachment", attachment: rec.attachment }],
+        usage: EMPTY_USAGE(),
+      });
+      continue;
     }
 
     if (rec.type === "user") {
@@ -487,7 +504,8 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
         startedAt: start,
         endedAt: end,
         durationMs,
-        msgCount: messages.length,
+        // injected-context rows aren't conversation turns; keep the stat honest
+        msgCount: messages.filter(m => m.role !== "attachment").length,
         messages,
         toolResults: aNorm.toolResults,
         toolCounts: aNorm.toolCounts,

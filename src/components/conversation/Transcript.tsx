@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { agentMeta, fmtCost, fmtDur, fmtTime, modelColor, modelFamily, modelLabel } from "../../lib/format";
+import { agentMeta, fmtCost, fmtDur, fmtTime, fmtTokens, modelColor, modelFamily, modelLabel } from "../../lib/format";
 import { Icons } from "../../lib/icons";
 import { Caret, CodeBlock, UsageChips } from "../../lib/md";
 import type { NormAgent, NormBlock, NormMsg, NormToolResult, NormWorkflow } from "../../lib/normalize";
-import { AskUserQuestionCard, BlockAnchor, MsgPermalink, TaskCreateCard, TaskGenericCard, TaskUpdateCard, ThinkingBlock, ToolCard, UserGroup, UserMessage, isUserTaskNotification, type TaskSnapshot } from "./blocks";
+import { AskUserQuestionCard, AttachmentGroup, BlockAnchor, MsgPermalink, TaskCreateCard, TaskGenericCard, TaskUpdateCard, ThinkingBlock, ToolCard, UserGroup, UserMessage, isUserTaskNotification, type TaskSnapshot } from "./blocks";
 
 // Each entry carries the source msg's uuid + the block's index inside
 // that msg. We need both so non-tool blocks (text/thinking — which have
@@ -26,7 +26,7 @@ export interface ViewSettings { expandThinking: boolean; expandTools: boolean; }
 export type WorkflowSpawn = { workflow: NormWorkflow; agents: NormAgent[] };
 
 export interface Group {
-  kind: "user" | "user-tasknote" | "assistant";
+  kind: "user" | "user-tasknote" | "assistant" | "attachment";
   key: string;
   msg?: NormMsg;
   msgs?: NormMsg[];
@@ -36,6 +36,17 @@ export interface Group {
 function buildGroups(messages: NormMsg[]): Group[] {
   const groups: Group[] = [];
   for (const m of messages) {
+    if (m.role === "attachment") {
+      const last = groups[groups.length - 1];
+      // consecutive injections (skill listing + tool delta + …) fold into
+      // one compact row — they land together before the same model call
+      if (last && last.kind === "attachment") {
+        last.msgs!.push(m);
+      } else {
+        groups.push({ kind: "attachment", msgs: [m], key: m.uuid });
+      }
+      continue;
+    }
     if (m.role === "user") {
       if (isUserTaskNotification(m)) {
         groups.push({ kind: "user-tasknote", msg: m, key: m.uuid });
@@ -418,7 +429,7 @@ function WorkflowCard({ block, spawn, agentsByToolUse, onOpen, settings, query, 
   );
 }
 
-function AssistantGroup({ group, getResult, agentsByToolUse, workflowsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, extraClass = "", permalinks = true, toolFilter }: {
+function AssistantGroup({ group, getResult, agentsByToolUse, workflowsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, extraClass = "", permalinks = true, toolFilter, cumCostByMsg }: {
   group: Group;
   getResult: (id: string) => NormToolResult | undefined;
   agentsByToolUse: Record<string, NormAgent>;
@@ -431,6 +442,7 @@ function AssistantGroup({ group, getResult, agentsByToolUse, workflowsByToolUse,
   extraClass?: string;
   permalinks?: boolean;
   toolFilter?: Set<string>;
+  cumCostByMsg?: Map<string, number>;
 }) {
   const msgs = group.msgs!;
   const fam = modelFamily(group.model);
@@ -438,7 +450,8 @@ function AssistantGroup({ group, getResult, agentsByToolUse, workflowsByToolUse,
   const skill = msgs.find(m => m.attributionSkill)?.attributionSkill;
   const lastStop = msgs[msgs.length - 1].stopReason;
   const steps = msgs.length;
-  const allBlocks: BlockEntry[] = msgs.flatMap(m => m.blocks.map((b, i) => ({ b, msgUuid: m.uuid, idxInMsg: i })));
+  const blocksFor = (m: NormMsg): BlockEntry[] => m.blocks.map((b, i) => ({ b, msgUuid: m.uuid, idxInMsg: i }));
+  const blockProps = { getResult, agentsByToolUse, workflowsByToolUse, onOpenAgent, settings, taskStateById, query, forceExpandedAgents, permalinks, toolFilter };
   return (
     <div className={"msg asst " + (extraClass || "fade-in")} style={{ "--mc": `var(--${fam})` } as React.CSSProperties}>
       <div className="msg-gutter">
@@ -460,9 +473,39 @@ function AssistantGroup({ group, getResult, agentsByToolUse, workflowsByToolUse,
           <span className="msg-head-spacer" />
           <UsageChips u={usage} compact />
           {usage.cost > 0 ? <span className="msg-cost tnum">{fmtCost(usage.cost)}</span> : null}
+          {(() => {
+            const cum = cumCostByMsg?.get(msgs[msgs.length - 1].uuid);
+            return cum && cum > usage.cost
+              ? <span className="msg-cum tnum" title="Session running total up to here (subagents counted at spawn)">Σ {fmtCost(cum)}</span>
+              : null;
+          })()}
         </div>
         <div className="msg-blocks">
-          <Blocks entries={allBlocks} getResult={getResult} agentsByToolUse={agentsByToolUse} workflowsByToolUse={workflowsByToolUse} onOpenAgent={onOpenAgent} settings={settings} taskStateById={taskStateById} query={query} forceExpandedAgents={forceExpandedAgents} permalinks={permalinks} toolFilter={toolFilter} />
+          {steps === 1 ? (
+            <Blocks entries={blocksFor(msgs[0])} {...blockProps} />
+          ) : (
+            // Multi-step group: each step is one API call with its own bill.
+            // The group header keeps the total; each step shows its share.
+            msgs.map((m, i) => (
+              <div className="asst-step" key={m.uuid}>
+                <div
+                  className="asst-step-head"
+                  title={`${fmtTime(m.ts)} · in ${fmtTokens(m.usage.input)} · out ${fmtTokens(m.usage.output)} · cache write ${fmtTokens(m.usage.cw)} · cache read ${fmtTokens(m.usage.cr)}`}
+                >
+                  <span className="asst-step-n">step {i + 1}</span>
+                  <span className="asst-step-rule" />
+                  {m.usage.cost > 0 ? <span className="asst-step-cost tnum">{fmtCost(m.usage.cost)}</span> : null}
+                  {(() => {
+                    const cum = cumCostByMsg?.get(m.uuid);
+                    return cum && cum > m.usage.cost
+                      ? <span className="asst-step-cum tnum" title="Session running total up to here (subagents counted at spawn)">Σ {fmtCost(cum)}</span>
+                      : null;
+                  })()}
+                </div>
+                <Blocks entries={blocksFor(m)} {...blockProps} />
+              </div>
+            ))
+          )}
         </div>
       </div>
     </div>
@@ -560,6 +603,9 @@ export interface TranscriptModel {
   newKeys: Set<string>;
   getResult: (id: string) => NormToolResult | undefined;
   q: string;
+  /** Running spend after each assistant message (uuid → $), subagent costs
+   * counted once at their spawn point so the last value ≈ session total. */
+  cumCostByMsg: Map<string, number>;
 }
 
 // All the filtering + animation state lives in this hook so we can drive
@@ -663,8 +709,24 @@ export function useTranscriptModel({ messages, toolResults, agentsByToolUse, que
     return () => clearTimeout(t);
   }, [groups]);
 
+  const cumCostByMsg = useMemo(() => {
+    const m = new Map<string, number>();
+    let cum = 0;
+    const seenAgents = new Set<string>();
+    for (const msg of messages) {
+      cum += msg.usage.cost;
+      for (const b of msg.blocks) {
+        if (b.type !== "tool_use" || !b.id) continue;
+        const a = agentsByToolUse[b.id];
+        if (a && !seenAgents.has(a.id)) { seenAgents.add(a.id); cum += a.usage.cost; }
+      }
+      m.set(msg.uuid, cum);
+    }
+    return m;
+  }, [messages, agentsByToolUse]);
+
   const getResult = (id: string) => toolResults[id];
-  return { groups, filtered, forceExpandedAgents, taskStateById, newKeys, getResult, q };
+  return { groups, filtered, forceExpandedAgents, taskStateById, newKeys, getResult, q, cumCostByMsg };
 }
 
 // One rendered transcript row. Exported so the virtualized renderer in
@@ -687,6 +749,9 @@ export function GroupRow({ g, model, agentsByToolUse, workflowsByToolUse, onOpen
   if (g.kind === "user") {
     return <UserGroup msgs={g.msgs!} extraClass={extra} permalinks={permalinks} />;
   }
+  if (g.kind === "attachment") {
+    return <AttachmentGroup msgs={g.msgs!} extraClass={extra} />;
+  }
   return (
     <AssistantGroup
       group={g}
@@ -701,6 +766,7 @@ export function GroupRow({ g, model, agentsByToolUse, workflowsByToolUse, onOpen
       extraClass={extra}
       permalinks={permalinks}
       toolFilter={toolFilter}
+      cumCostByMsg={model.cumCostByMsg}
     />
   );
 }

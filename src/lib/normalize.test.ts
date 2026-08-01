@@ -47,3 +47,43 @@ describe("normalize: tool_use → message map + per-family cost", () => {
     } finally { restoreFetch(); }
   });
 });
+
+describe("normalize: attachments + thinking blocks", () => {
+  it("surfaces attachment records as role=attachment messages with the payload", async () => {
+    stubFetchEmpty();
+    try {
+      const att: TraceRecord = {
+        type: "attachment", uuid: "att-1", timestamp: "2026-06-11T09:59:59Z",
+        attachment: { type: "skill_listing", skillCount: 3, content: "- a\n- b\n- c" },
+      } as unknown as TraceRecord;
+      const t = await fetchNormalizedTrace("p", "s", [att, ASSIST]);
+      const m = t.main.messages.find(x => x.role === "attachment");
+      expect(m).toBeTruthy();
+      expect(m!.uuid).toBe("att-1");
+      expect(m!.blocks[0].type).toBe("attachment");
+      expect(m!.blocks[0].attachment?.type).toBe("skill_listing");
+    } finally { restoreFetch(); }
+  });
+
+  it("drops empty thinking blocks but keeps non-empty ones", async () => {
+    stubFetchEmpty();
+    try {
+      const rec: TraceRecord = {
+        type: "assistant", uuid: "asst-t", timestamp: "2026-06-11T10:00:00Z",
+        message: {
+          id: "m2", model: "claude-haiku-4-5-20251001",
+          usage: { input_tokens: 10, output_tokens: 5 },
+          content: [
+            { type: "thinking", thinking: "", signature: "sig" },
+            { type: "thinking", thinking: "let me pick", signature: "sig2" },
+            { type: "text", text: "rock" },
+          ],
+        },
+      } as unknown as TraceRecord;
+      const t = await fetchNormalizedTrace("p", "s", [rec]);
+      const msg = t.main.messages.find(m => m.uuid === "asst-t");
+      expect(msg!.blocks.map(b => b.type)).toEqual(["thinking", "text"]);
+      expect(msg!.blocks[0].thinking).toBe("let me pick");
+    } finally { restoreFetch(); }
+  });
+});
