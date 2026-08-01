@@ -47,7 +47,10 @@ const AWAY_MS = 30 * 60_000;
 function t(ms: string): number { return new Date(ms).getTime(); }
 
 export function analyzeTime(trace: NormTrace): TimeInsights {
-  const msgs = trace.main.messages;
+  // Attachment rows are harness injections, not conversation turns — an
+  // attachment between an assistant reply and the user's next message would
+  // otherwise break the assistant→user wait detection below.
+  const msgs = trace.main.messages.filter(m => m.role !== "attachment");
   const ins: TimeInsights = {
     workingMs: 0, waitingMs: 0, awayMs: 0, stalls: [], segments: [],
     startTs: msgs[0]?.ts || "", endTs: msgs[msgs.length - 1]?.ts || "",

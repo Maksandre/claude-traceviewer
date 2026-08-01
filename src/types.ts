@@ -34,14 +34,25 @@ export interface ContentBlock {
   is_error?: boolean;
 }
 
+/** Context the harness injected into the next model call (skill listings,
+ * deferred-tool deltas, nested memory files, IDE state, …). The `type` field
+ * discriminates; the rest of the shape varies per type. */
+export interface AttachmentPayload {
+  type?: string;
+  [key: string]: unknown;
+}
+
 export interface TraceRecord {
-  type: "user" | "assistant" | "progress" | "system" | "queue-operation" | "file-history-snapshot" | "last-prompt";
+  type: "user" | "assistant" | "progress" | "system" | "queue-operation" | "file-history-snapshot" | "last-prompt" | "attachment";
   uuid?: string;
   parentUuid?: string | null;
   timestamp?: string;
   promptId?: string;
   sessionId?: string;
   slug?: string;
+  /** Reasoning effort the assistant turn ran at ("low" … "max"). Written on
+   * assistant records only; absent on older traces. */
+  effort?: string;
 
   // user / assistant
   message?: {
@@ -61,6 +72,9 @@ export interface TraceRecord {
   // user tool result extras
   toolUseResult?: any;
   sourceToolAssistantUUID?: string;
+
+  // attachment
+  attachment?: AttachmentPayload;
 
   // progress
   data?: {

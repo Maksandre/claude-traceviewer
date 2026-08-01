@@ -6,30 +6,18 @@ import { Caret, ClampBlock, CodeBlock, Markdown, MoreButton } from "../../lib/md
 import type { NormAgent, NormBlock, NormMsg, NormToolResult } from "../../lib/normalize";
 import { toolColor } from "../../lib/format";
 import { usePermalinks } from "../../lib/permalinkCtx";
+import { copyText } from "../../lib/clipboard";
 import { ToolName } from "../ToolName";
 
-// Shared copy-link primitive. Falls back from the Clipboard API to a
-// hidden textarea + execCommand when the page isn't served over a
-// secure context (http on a non-localhost origin, etc).
-function copyPermalink(params: Record<string, string>, done: () => void) {
-  const url = new URL(window.location.href);
-  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  const link = url.toString();
-  if (navigator.clipboard?.writeText) {
-    navigator.clipboard.writeText(link).then(done).catch(() => fallbackCopy(link, done));
-  } else {
-    fallbackCopy(link, done);
-  }
-}
-function fallbackCopy(link: string, done: () => void) {
-  try {
-    const ta = document.createElement("textarea");
-    ta.value = link; ta.style.position = "fixed"; ta.style.opacity = "0";
-    document.body.appendChild(ta); ta.select();
-    document.execCommand("copy");
-    document.body.removeChild(ta);
-    done();
-  } catch {}
+// Shared copy primitive for the id buttons: joins `key=value` pairs into a
+// single self-describing line (`session=… msg=… block=…`) so a paste stays
+// readable without the surrounding UI.
+function copyIds(params: Record<string, string | null | undefined>, done: () => void) {
+  const text = Object.entries(params)
+    .filter(([, v]) => !!v)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(" ");
+  copyText(text).then(ok => { if (ok) done(); });
 }
 
 // Briefly add `is-target` to an element, then strip it. Used to flash
@@ -40,21 +28,15 @@ function flashTarget(el: HTMLElement | null) {
   window.setTimeout(() => el.classList.remove("is-target"), 2400);
 }
 
-// Small chain-link button that copies a `?msg=<uuid>` deep-link to the
-// current row. Lives in the .msg-head so it picks up the same hover row.
-// A click also scrolls the row into center view and updates the URL bar
-// via the PermalinkContext (which routes through App state so the URL
-// effect mirrors it).
+// Small copy button in the .msg-head that copies the session + message
+// ids for the current row, so it picks up the same hover row.
 export function MsgPermalink({ msgKey }: { msgKey: string }) {
   const [copied, setCopied] = useState(false);
   const api = usePermalinks();
   const onClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    api?.selectTarget(msgKey, null);
-    const msg = (e.currentTarget as HTMLElement).closest(".msg") as HTMLElement | null;
-    msg?.scrollIntoView({ behavior: "auto", block: "start" });
-    flashTarget(msg);
-    copyPermalink({ msg: msgKey }, () => {
+    flashTarget((e.currentTarget as HTMLElement).closest(".msg") as HTMLElement | null);
+    copyIds({ session: api?.sessionId, msg: msgKey }, () => {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1100);
     });
@@ -64,16 +46,16 @@ export function MsgPermalink({ msgKey }: { msgKey: string }) {
       type="button"
       className={"msg-permalink " + (copied ? "is-copied" : "")}
       onClick={onClick}
-      title={copied ? "Link copied" : "Copy link to this message"}
-      aria-label="Copy link to this message"
+      title={copied ? "Ids copied" : "Copy session & message id"}
+      aria-label="Copy session & message id"
     >
-      {copied ? <Icons.check size={11} /> : <Icons.link size={11} />}
+      {copied ? <Icons.check size={11} /> : <Icons.copy size={11} />}
     </button>
   );
 }
 
-// Per-block permalink. Sits inside a `.blk-anchor` wrapper that hosts the
-// `data-block-id` used by ConversationView's deep-link scroll. The
+// Per-block copy button. Sits inside a `.blk-anchor` wrapper that hosts
+// the `data-block-id` used by ConversationView's deep-link scroll. The
 // button is rendered inside a sticky slot so it stays pinned at the
 // block's top-right corner while the block scrolls past.
 export function BlockPermalink({ msgKey, blockId, label }: { msgKey: string; blockId: string; label: string }) {
@@ -81,11 +63,8 @@ export function BlockPermalink({ msgKey, blockId, label }: { msgKey: string; blo
   const api = usePermalinks();
   const onClick = (e: React.MouseEvent) => {
     e.stopPropagation();
-    api?.selectTarget(msgKey, blockId);
-    const anchor = (e.currentTarget as HTMLElement).closest(".blk-anchor") as HTMLElement | null;
-    anchor?.scrollIntoView({ behavior: "auto", block: "start" });
-    flashTarget(anchor);
-    copyPermalink({ msg: msgKey, block: blockId }, () => {
+    flashTarget((e.currentTarget as HTMLElement).closest(".blk-anchor") as HTMLElement | null);
+    copyIds({ session: api?.sessionId, msg: msgKey, block: blockId }, () => {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1100);
     });
@@ -95,10 +74,10 @@ export function BlockPermalink({ msgKey, blockId, label }: { msgKey: string; blo
       type="button"
       className={"blk-permalink " + (copied ? "is-copied" : "")}
       onClick={onClick}
-      title={copied ? "Link copied" : `Jump and copy link to this ${label}`}
-      aria-label={`Jump and copy link to this ${label}`}
+      title={copied ? "Ids copied" : `Copy ids for this ${label}`}
+      aria-label={`Copy ids for this ${label}`}
     >
-      {copied ? <Icons.check size={16} /> : <Icons.link size={16} />}
+      {copied ? <Icons.check size={16} /> : <Icons.copy size={16} />}
     </button>
   );
 }
@@ -563,6 +542,118 @@ export function SystemMetaCard({ tag, inner }: { tag: string; inner: string }) {
       ) : (
         <div className="sysmeta-body"><Markdown text={trimmed} /></div>
       )}
+    </div>
+  );
+}
+
+// === Injected-context attachments ===
+// Attachment records are context the harness slid into the next model call
+// (skill listings, deferred-tool deltas, nested memory files, IDE state, …).
+// They're background noise most of the time, so a group of consecutive
+// injections renders as one collapsed row with per-item summaries.
+
+interface AttachmentSummary { label: string; brief: string; detail: string }
+
+const countOf = (v: unknown): number => (Array.isArray(v) ? v.length : 0);
+const joinLines = (v: unknown): string => (Array.isArray(v) ? v.join("\n") : "");
+// Long paths read as noise in a one-line summary; keep the last two segments.
+const shortPath = (v: unknown): string => String(v || "").replace(/^.*\/(?=[^/]+\/[^/]+$)/, "…/");
+// Attachment `content` isn't always a string — nested_memory wraps the text
+// in {path, type, content}. Unwrap known shapes; JSON as the last resort.
+function detailText(v: unknown): string {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "object") {
+    const o = v as Record<string, unknown>;
+    if (typeof o.content === "string") return o.content;
+    if (typeof o.text === "string") return o.text;
+    return JSON.stringify(v, null, 2);
+  }
+  return String(v);
+}
+
+function attachmentSummary(a: Record<string, unknown>): AttachmentSummary {
+  const type = String(a.type || "attachment");
+  const label = type.replace(/_/g, " ");
+  switch (type) {
+    case "skill_listing": {
+      const n = typeof a.skillCount === "number" ? a.skillCount : countOf(a.names);
+      return { label: "skills", brief: String(n), detail: detailText(a.content) };
+    }
+    case "deferred_tools_delta": {
+      const added = countOf(a.addedNames);
+      const removed = countOf(a.removedNames);
+      const brief = [added ? `+${added}` : "", removed ? `−${removed}` : ""].filter(Boolean).join(" ") || "±0";
+      const detail = [
+        added ? `added:\n${joinLines(a.addedNames)}` : "",
+        removed ? `removed:\n${joinLines(a.removedNames)}` : "",
+      ].filter(Boolean).join("\n\n");
+      return { label: "deferred tools", brief, detail };
+    }
+    case "agent_listing_delta": {
+      const added = countOf(a.addedTypes);
+      const removed = countOf(a.removedTypes);
+      const brief = [added ? `+${added}` : "", removed ? `−${removed}` : ""].filter(Boolean).join(" ") || "±0";
+      return { label: "agent types", brief, detail: joinLines(a.addedLines) || joinLines(a.addedTypes) };
+    }
+    case "command_permissions":
+      return { label: "permissions", brief: `${countOf(a.allowedTools)}`, detail: joinLines(a.allowedTools) };
+    case "nested_memory":
+      return { label: "memory", brief: shortPath(a.displayPath || a.path), detail: detailText(a.content) };
+    case "file":
+      return { label: "file", brief: shortPath(a.displayPath || a.filename), detail: detailText(a.content) };
+    case "directory":
+      return { label: "directory", brief: shortPath(a.displayPath || a.path), detail: detailText(a.content) };
+    case "task_reminder":
+      return { label: "task reminder", brief: typeof a.itemCount === "number" ? String(a.itemCount) : "", detail: detailText(a.content) };
+    case "opened_file_in_ide":
+      return { label: "opened in IDE", brief: String(a.filename || "").split("/").pop() || "", detail: "" };
+    case "diagnostics":
+      return { label: "diagnostics", brief: `${countOf(a.files)} files`, detail: JSON.stringify(a.files ?? a, null, 2) };
+    default: {
+      const rest = Object.fromEntries(Object.entries(a).filter(([k]) => k !== "type"));
+      return { label, brief: "", detail: Object.keys(rest).length ? JSON.stringify(rest, null, 2) : "" };
+    }
+  }
+}
+
+// One quiet mono line aligned with the content column — harness plumbing
+// shouldn't compete with the conversation. Expands into a detail card.
+export function AttachmentGroup({ msgs, extraClass = "" }: { msgs: NormMsg[]; extraClass?: string }) {
+  const [open, setOpen] = useState(false);
+  const items = msgs.flatMap(m => m.blocks
+    .filter(b => b.type === "attachment" && b.attachment)
+    .map(b => ({ uuid: m.uuid, ts: m.ts, sum: attachmentSummary(b.attachment!) })));
+  if (!items.length) return null;
+  const line = items.map(it => (it.sum.brief ? `${it.sum.label} ${it.sum.brief}` : it.sum.label)).join("  ·  ");
+  return (
+    <div className={"msg attach-row " + (extraClass || "fade-in")}>
+      <div className="msg-gutter" />
+      <div className="msg-main">
+        <button
+          className="attach-line"
+          onClick={() => setOpen(o => !o)}
+          type="button"
+          title={`${fmtTime(msgs[0].ts)} — context the harness injected into the next model call`}
+        >
+          <Caret open={open} />
+          <span className="attach-line-label">context</span>
+          <span className="attach-line-sum">{line}</span>
+        </button>
+        {open ? (
+          <div className="attach-items">
+            {items.map((it, i) => (
+              <div className="attach-item" key={it.uuid + i}>
+                <div className="attach-item-head">
+                  <span className="attach-item-label">{it.sum.label}</span>
+                  {it.sum.brief ? <span className="attach-item-brief">{it.sum.brief}</span> : null}
+                </div>
+                {it.sum.detail ? <CodeBlock code={it.sum.detail} max={300} /> : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
     </div>
   );
 }

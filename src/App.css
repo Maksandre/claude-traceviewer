@@ -270,6 +270,18 @@ button { font-family: inherit; }
 .conv-head-meta { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12px; color: var(--tx-2); font-family: var(--ff-mono); }
 .conv-head-meta span { display: inline-flex; align-items: center; gap: 5px; }
 .conv-head-meta svg { opacity: .6; }
+/* Copies the session uuid; the id itself is never printed — only this button. */
+.copy-id {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-family: var(--ff-mono); font-size: 11px; color: var(--tx-2);
+  padding: 3px 9px; border-radius: 99px;
+  background: var(--bg-2); border: 1px solid var(--line-soft);
+  cursor: pointer; transition: color .13s, border-color .13s, background .13s;
+}
+.copy-id:hover { color: var(--tx-0); border-color: var(--line); background: var(--bg-3); }
+.copy-id:focus-visible { outline: 1px solid var(--accent-line); outline-offset: 1px; }
+.copy-id.is-copied { color: var(--ok); border-color: color-mix(in oklch, var(--ok) 40%, transparent); }
+.copy-id svg { opacity: 1; }
 .conv-head-stats { display: flex; gap: 22px; }
 .chs { display: flex; flex-direction: column; align-items: flex-end; }
 .chs-v { font-family: var(--ff-mono); font-size: 19px; font-weight: 600; }
@@ -316,6 +328,20 @@ button { font-family: inherit; }
 .model-badge.sm { font-size: 10px; padding: 2px 7px; gap: 5px; }
 .model-badge.sm .model-dot { width: 5px; height: 5px; }
 .model-dot { width: 6px; height: 6px; border-radius: 99px; background: var(--mc); }
+
+/* Reasoning-effort badge. The bar meter carries the level, so the compact
+   variant (tree rows, agent table) drops the word and keeps the meter. */
+.effort-badge { display: inline-flex; align-items: center; gap: 6px; font-family: var(--ff-mono); font-size: 11px; font-weight: 600; padding: 3px 9px; border-radius: 99px; background: var(--bg-2); border: 1px solid var(--line-soft); color: var(--tx-1); }
+.effort-badge .effort-label { letter-spacing: .02em; }
+.effort-bars { display: inline-flex; align-items: flex-end; gap: 1.5px; height: 10px; }
+.effort-bars i { width: 2px; background: var(--tx-3); opacity: .35; border-radius: 1px; }
+.effort-bars i:nth-child(1) { height: 3px; }
+.effort-bars i:nth-child(2) { height: 4.5px; }
+.effort-bars i:nth-child(3) { height: 6px; }
+.effort-bars i:nth-child(4) { height: 8px; }
+.effort-bars i:nth-child(5) { height: 10px; }
+.effort-bars i.on { background: var(--accent); opacity: 1; }
+.effort-badge.compact { padding: 0; gap: 0; background: transparent; border: none; margin-left: 6px; vertical-align: -1px; }
 .skill-badge { font-family: var(--ff-mono); font-size: 11px; color: var(--tx-2); background: var(--bg-2); border: 1px solid var(--line-soft); padding: 2px 8px; border-radius: 99px; }
 .steps-badge { font-family: var(--ff-mono); font-size: 10.5px; color: var(--tx-2); background: var(--bg-2); border: 1px solid var(--line-soft); padding: 2px 8px; border-radius: 99px; }
 .stop-badge { font-family: var(--ff-mono); font-size: 10.5px; color: var(--warn); background: color-mix(in oklch, var(--warn) 14%, transparent); padding: 2px 7px; border-radius: 99px; }
@@ -421,6 +447,17 @@ button { font-family: inherit; }
 .usage-chips .uc.cr .uc-k { color: var(--sonnet); }
 .msg-blocks { display: flex; flex-direction: column; gap: 9px; }
 
+/* Per-step breakdown inside a multi-step assistant group: a hairline divider
+   per API call with just its cost — full token detail lives in the tooltip,
+   the group header keeps the total. */
+.asst-step { display: flex; flex-direction: column; gap: 9px; }
+.asst-step-head { display: flex; align-items: center; gap: 10px; min-width: 0; cursor: default; }
+.asst-step-n { font-family: var(--ff-mono); font-size: 9.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--tx-3); opacity: .7; flex-shrink: 0; }
+.asst-step-rule { flex: 1; border-top: 1px dashed var(--line-soft); }
+.asst-step-cost { font-family: var(--ff-mono); font-size: 10.5px; color: var(--tx-3); flex-shrink: 0; }
+/* Running session total — quieter than the per-call price it sits beside. */
+.msg-cum, .asst-step-cum { font-family: var(--ff-mono); font-size: 10px; color: var(--tx-3); opacity: .75; flex-shrink: 0; cursor: default; }
+
 .msg.sysrow { display: block; }
 
 .user-cmd { display: inline-flex; align-items: center; gap: 9px; background: var(--bg-2); border: 1px solid var(--line); border-left: 3px solid var(--accent); border-radius: var(--r-md); padding: 10px 14px; font-size: 14px; color: var(--accent); }
@@ -444,6 +481,18 @@ button { font-family: inherit; }
 .think-preview { font-size: 12px; color: var(--tx-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; font-style: italic; }
 .think-body { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--line); color: var(--tx-1); font-size: 12.5px; }
 .think-body .md-p { color: var(--tx-1); }
+/* === Injected context (attachment records) ===
+   Harness plumbing, not conversation — collapsed it's a single low-contrast
+   mono line in the content column; expanded it becomes a quiet detail card. */
+.msg.attach-row { padding: 0; }
+.attach-line { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; text-align: left; border: none; background: transparent; cursor: pointer; padding: 2px 0; font-family: var(--ff-mono); color: var(--tx-3); opacity: .65; transition: opacity .15s ease; }
+.attach-line:hover { opacity: 1; }
+.attach-line-label { font-size: 9.5px; text-transform: uppercase; letter-spacing: .1em; flex-shrink: 0; }
+.attach-line-sum { font-size: 10.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.attach-items { display: flex; flex-direction: column; gap: 12px; margin: 6px 0 8px; background: var(--bg-1); border: 1px solid var(--line-soft); border-radius: var(--r-md); padding: 12px 14px; }
+.attach-item-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.attach-item-label { font-family: var(--ff-mono); font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--tx-2); }
+.attach-item-brief { font-family: var(--ff-mono); font-size: 10.5px; color: var(--tx-3); }
 
 .blk.tool { background: var(--bg-1); border: 1px solid var(--line-soft); border-radius: var(--r-md); overflow: hidden; }
 .blk.tool.is-open { border-color: var(--line); }
@@ -725,7 +774,7 @@ button { font-family: inherit; }
 .adetail-type { font-family: var(--ff-mono); font-size: 16px; font-weight: 700; letter-spacing: -.01em; }
 .adetail-desc { font-size: 13px; color: var(--tx-2); margin-top: 2px; }
 .adetail-id { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
-.aid { font-family: var(--ff-mono); font-size: 10.5px; color: var(--tx-3); }
+.adetail-badges { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; justify-content: flex-end; }
 
 .adetail-stats { display: grid; grid-template-columns: repeat(6, 1fr); gap: 9px; margin-bottom: 16px; }
 @media (max-width: 980px) { .adetail-stats { grid-template-columns: repeat(3, 1fr); } }
@@ -986,10 +1035,12 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
   .ag-short { display: inline; }
 }
 /* Phone-width panel: the name earns the space back from the track, and only
-   the first/last axis ticks survive. */
+   the first/last axis ticks survive. The effort meter goes too — the model
+   cell has no room left to hold it on one line. */
 @container (max-width: 560px) {
   .ag-head, .ag-row { grid-template-columns: 1.7fr .6fr .55fr .35fr .5fr .65fr 1.7fr; gap: 7px; }
   .ag-tick:not(:first-child):not(:last-child) { display: none; }
+  .at-model .effort-badge { display: none; }
 }
 .ag-head { font-family: var(--ff-mono); font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--tx-3); padding: 0 4px 10px; border-bottom: 1px solid var(--line); }
 .ag-head .r, .ag-row .r { text-align: right; justify-self: end; }
@@ -1005,7 +1056,7 @@ button.tcount { cursor: pointer; font: inherit; line-height: 1; }
 .at-name { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .at-dot { width: 8px; height: 8px; border-radius: 99px; flex-shrink: 0; }
 .at-type { font-family: var(--ff-mono); font-size: 12.5px; font-weight: 500; color: var(--tx-0); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.at-model { font-family: var(--ff-mono); font-size: 11.5px; }
+.at-model { font-family: var(--ff-mono); font-size: 11.5px; display: flex; align-items: center; min-width: 0; }
 .at-tok { color: var(--tx-1); font-family: var(--ff-mono); }
 .at-costnum { font-family: var(--ff-mono); color: var(--tx-0); }
 .ag-track { position: relative; height: 16px; background: var(--bg-2); border-radius: 4px; overflow: hidden; }

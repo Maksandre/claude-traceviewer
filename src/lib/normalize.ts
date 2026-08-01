@@ -3,25 +3,30 @@ import { costFor, modelFamily } from "./format";
 import type { ModelFamily } from "./format";
 
 export interface NormBlock {
-  type: "text" | "thinking" | "tool_use" | "image";
+  type: "text" | "thinking" | "tool_use" | "image" | "attachment";
   text?: string;
   thinking?: string;
   id?: string;
   name?: string;
   input?: Record<string, any>;
   source?: { type: string; media_type: string; data: string };
+  /** Payload of a harness-injected attachment record (skill listing,
+   * deferred-tool delta, nested memory, …). `attachment.type` discriminates. */
+  attachment?: Record<string, unknown>;
 }
 
 export interface NormMsg {
   uuid: string;
   ts: string;
-  role: "user" | "assistant";
+  role: "user" | "assistant" | "attachment";
   model: string;
   blocks: NormBlock[];
   usage: { input: number; output: number; cw: number; cr: number; cost: number };
   stopReason?: string | null;
   attributionSkill?: string;
   onlyResults?: boolean;
+  /** Reasoning effort this assistant turn ran at; "" when the trace predates it. */
+  effort?: string;
 }
 
 export interface NormToolResult {
@@ -35,6 +40,9 @@ export interface NormAgent {
   agentType: string;
   description: string;
   model: string;
+  /** Reasoning effort the agent ran at (the dominant one across its turns);
+   * "" when the trace records don't carry it. */
+  effort: string;
   prompt: string;
   startedAt: string;
   endedAt: string;
@@ -69,10 +77,14 @@ export interface NormWorkflow {
 }
 
 export interface NormSession {
+  /** The conversation id — the session uuid Claude Code names the .jsonl after. */
+  id: string;
   project: string;
   attributionSkill: string;
   gitBranch: string;
   models: string[];
+  /** Reasoning effort the main agent ran at (dominant across its turns). */
+  effort: string;
   durationMs: number;
   startedAt: string;
   endedAt: string;
@@ -132,9 +144,24 @@ interface MergedAssistant {
   uuid: string;
   ts: string;
   model: string;
+  effort: string;
   content: ContentBlock[];
   usage: { input_tokens?: number; output_tokens?: number; cache_creation_input_tokens?: number; cache_read_input_tokens?: number };
   stopReason?: string | null;
+}
+
+/** The effort a set of turns ran at: the most frequent value, since a session
+ * can change effort mid-run and one badge has to stand for the whole agent. */
+export function dominantEffort(messages: NormMsg[]): string {
+  const counts = new Map<string, number>();
+  for (const m of messages) {
+    if (m.role !== "assistant" || !m.effort) continue;
+    counts.set(m.effort, (counts.get(m.effort) || 0) + 1);
+  }
+  let best = "";
+  let bestN = 0;
+  for (const [effort, n] of counts) if (n > bestN) { best = effort; bestN = n; }
+  return best;
 }
 
 function buildMergedAssistants(records: TraceRecord[]): Map<string, MergedAssistant> {
@@ -144,10 +171,11 @@ function buildMergedAssistants(records: TraceRecord[]): Map<string, MergedAssist
     const id = rec.message.id;
     let entry = map.get(id);
     if (!entry) {
-      entry = { uuid: rec.uuid || id, ts: rec.timestamp || "", model: rec.message.model || "", content: [], usage: {}, stopReason: null };
+      entry = { uuid: rec.uuid || id, ts: rec.timestamp || "", model: rec.message.model || "", effort: rec.effort || "", content: [], usage: {}, stopReason: null };
       map.set(id, entry);
     }
     if (rec.message.model) entry.model = rec.message.model;
+    if (rec.effort) entry.effort = rec.effort;
     if (rec.message.usage?.output_tokens != null) entry.usage = rec.message.usage;
     if (rec.message.stop_reason) entry.stopReason = rec.message.stop_reason;
     const content = rec.message.content;
@@ -179,6 +207,8 @@ function blockify(content: ContentBlock[]): NormBlock[] {
   const out: NormBlock[] = [];
   for (const b of content) {
     if (b.type === "text" && b.text) out.push({ type: "text", text: b.text });
+    // Claude Code strips thinking text from the JSONL (only the signature
+    // survives), so empty thinking blocks carry no content — drop them.
     else if (b.type === "thinking" && b.thinking) out.push({ type: "thinking", thinking: b.thinking });
     else if (b.type === "tool_use") out.push({ type: "tool_use", id: b.id, name: b.name, input: b.input });
     else if (b.type === "image") out.push({ type: "image", source: b.source });
@@ -227,6 +257,18 @@ function normalizeRecords(records: TraceRecord[]): {
     if (rec.timestamp) {
       if (!startedAt) startedAt = rec.timestamp;
       endedAt = rec.timestamp;
+    }
+
+    if (rec.type === "attachment" && rec.attachment) {
+      messages.push({
+        uuid: rec.uuid || `att-${messages.length}`,
+        ts: rec.timestamp || "",
+        role: "attachment",
+        model: "",
+        blocks: [{ type: "attachment", attachment: rec.attachment }],
+        usage: EMPTY_USAGE(),
+      });
+      continue;
     }
 
     if (rec.type === "user") {
@@ -316,6 +358,7 @@ function normalizeRecords(records: TraceRecord[]): {
         usage: u,
         stopReason: entry.stopReason,
         attributionSkill: undefined,
+        effort: entry.effort,
       });
       continue;
     }
@@ -342,13 +385,14 @@ function formatWorkflowResult(r: unknown): string {
   return [lines.join("\n"), summary].filter(Boolean).join("\n\n");
 }
 
-function readMeta(meta: any): { agentType?: string; description?: string; prompt?: string; model?: string; toolUseId?: string } {
+function readMeta(meta: any): { agentType?: string; description?: string; prompt?: string; model?: string; effort?: string; toolUseId?: string } {
   if (!meta) return {};
   return {
     agentType: meta.agentType || meta.subagent_type,
     description: meta.description,
     prompt: meta.prompt,
     model: meta.model,
+    effort: meta.effort,
     toolUseId: meta.toolUseId || meta.tool_use_id,
   };
 }
@@ -455,11 +499,13 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
         agentType: meta.agentType || data?.agentType || "agent",
         description: meta.description || "",
         model: modelStr,
+        effort: meta.effort || dominantEffort(messages),
         prompt: promptText,
         startedAt: start,
         endedAt: end,
         durationMs,
-        msgCount: messages.length,
+        // injected-context rows aren't conversation turns; keep the stat honest
+        msgCount: messages.filter(m => m.role !== "attachment").length,
         messages,
         toolResults: aNorm.toolResults,
         toolCounts: aNorm.toolCounts,
@@ -539,10 +585,12 @@ export async function fetchNormalizedTrace(project: string, session: string, rec
 
   return {
     session: {
+      id: session || sessionInfo?.sessionId || "",
       project: sessionInfo?.cwd || project,
       attributionSkill,
       gitBranch: sessionInfo?.gitBranch || "",
       models: [...mainNorm.modelsSeen],
+      effort: dominantEffort(mainNorm.messages),
       durationMs,
       startedAt,
       endedAt,

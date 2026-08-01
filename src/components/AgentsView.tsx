@@ -25,6 +25,8 @@ function resolveWorkflowGroups(trace: NormTrace): WorkflowGroup[] {
     .filter(g => g.agents.length > 0);
 }
 import { clearCachedPersona, getCachedPersona, pickPluginDirectory, type CachedPersona } from "../lib/personaCache";
+import { CopyIdButton } from "./CopyIdButton";
+import { EffortBadge } from "./EffortBadge";
 import { Transcript, type ViewSettings } from "./conversation/Transcript";
 import { ToolFilterStrip } from "./ToolFilterStrip";
 
@@ -42,6 +44,7 @@ interface TreeNodeProps {
   agentType?: string;
   description?: string;
   subtitle?: string;
+  effort?: string;
   usage: { cost: number };
   durationMs: number;
   toolCounts: Record<string, number>;
@@ -50,7 +53,7 @@ interface TreeNodeProps {
   onSelect: (k: string) => void;
 }
 
-function TreeNode({ kind, nodeKey, agentType, description, subtitle, usage, durationMs, toolCounts, selected, depth, onSelect }: TreeNodeProps) {
+function TreeNode({ kind, nodeKey, agentType, description, subtitle, effort, usage, durationMs, toolCounts, selected, depth, onSelect }: TreeNodeProps) {
   const isMain = kind === "main";
   const hue = isMain ? 18 : agentMeta(agentType || "").hue;
   const col = `oklch(0.70 0.12 ${hue})`;
@@ -73,7 +76,10 @@ function TreeNode({ kind, nodeKey, agentType, description, subtitle, usage, dura
         </span>
         <span className="tnode-meta tnum">
           <span className="tnode-cost">{fmtCost(usage.cost)}</span>
-          <span className="tnode-sub">{fmtDur(durationMs)} · {tools}t</span>
+          <span className="tnode-sub">
+            {fmtDur(durationMs)} · {tools}t
+            <EffortBadge effort={effort} compact />
+          </span>
         </span>
       </button>
     </div>
@@ -102,6 +108,7 @@ function TreeBranch({ parentId, childrenOf, workflowGroups, selected, onSelect }
         nodeKey={"agent:" + a.id}
         agentType={a.agentType}
         description={a.description}
+        effort={a.effort}
         usage={a.usage}
         durationMs={a.durationMs}
         toolCounts={a.toolCounts}
@@ -189,10 +196,13 @@ export function AgentDetail({ agent, onOpenAgent, settings, allAgents }: { agent
           </div>
         </div>
         <div className="adetail-id">
-          <span className="model-badge" style={{ "--mc": modelColor(agent.model) } as React.CSSProperties}>
-            <span className="model-dot" />{modelLabel(agent.model)}
-          </span>
-          <span className="aid">id {agent.id.slice(0, 10)}</span>
+          <div className="adetail-badges">
+            <span className="model-badge" style={{ "--mc": modelColor(agent.model) } as React.CSSProperties}>
+              <span className="model-dot" />{modelLabel(agent.model)}
+            </span>
+            <EffortBadge effort={agent.effort} />
+          </div>
+          <CopyIdButton id={agent.id} label="copy agent id" title="Copy this subagent's id to the clipboard" />
         </div>
       </div>
 
@@ -355,7 +365,10 @@ function DelegItem({ agent: a, onSelect, childrenOf }: { agent: NormAgent; onSel
         </span>
         <span className="deleg-meta tnum">
           <b>{fmtCost(a.usage.cost)}</b>
-          <span>{fmtDur(a.durationMs)}{kids.length ? ` · ${kids.length} sub` : ""}</span>
+          <span>
+            {fmtDur(a.durationMs)}{kids.length ? ` · ${kids.length} sub` : ""}
+            <EffortBadge effort={a.effort} compact />
+          </span>
         </span>
         <span className="deleg-go"><Icons.arrowRight size={14} /></span>
       </button>
@@ -392,11 +405,15 @@ function MainDetail({ trace, onSelect, onGotoConversation }: { trace: NormTrace;
           </div>
         </div>
         <div className="adetail-id">
-          {s.models[0] ? (
-            <span className="model-badge" style={{ "--mc": modelColor(s.models[0]) } as React.CSSProperties}>
-              <span className="model-dot" />{modelLabel(s.models[0])}
-            </span>
-          ) : null}
+          <div className="adetail-badges">
+            {s.models[0] ? (
+              <span className="model-badge" style={{ "--mc": modelColor(s.models[0]) } as React.CSSProperties}>
+                <span className="model-dot" />{modelLabel(s.models[0])}
+              </span>
+            ) : null}
+            <EffortBadge effort={s.effort} />
+          </div>
+          <CopyIdButton id={s.id} label="copy conversation id" title="Copy this conversation's id to the clipboard" />
         </div>
       </div>
       <div className="adetail-stats">
@@ -462,6 +479,7 @@ export function AgentsView({ trace, settings, onGotoConversation, focusAgentId, 
             kind="main"
             nodeKey="main"
             subtitle={trace.session.attributionSkill ? "/" + trace.session.attributionSkill : "orchestrator"}
+            effort={trace.session.effort}
             usage={trace.main.usage}
             durationMs={trace.session.durationMs}
             toolCounts={trace.main.toolCounts}

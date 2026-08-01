@@ -21,10 +21,10 @@ function msg(opts: {
 function trace(mainMsgs: NormMsg[], agents: { agentType: string; messages: NormMsg[] }[] = []): NormTrace {
   const u = { input: 0, output: 0, cw: 0, cr: 0, cost: 0 };
   return {
-    session: { project: "", attributionSkill: "", gitBranch: "", models: [], durationMs: 0, startedAt: "", endedAt: "" },
+    session: { id: "", project: "", attributionSkill: "", effort: "", gitBranch: "", models: [], durationMs: 0, startedAt: "", endedAt: "" },
     main: { messages: mainMsgs, toolResults: {}, toolCounts: {}, toolUseMsgUuid: {}, usage: u, peakContext: 0 },
     agents: agents.map((a, i) => ({
-      id: "a" + i, toolUseId: "t" + i, agentType: a.agentType, description: "", model: "",
+      id: "a" + i, toolUseId: "t" + i, agentType: a.agentType, description: "", model: "", effort: "",
       prompt: "", startedAt: "", endedAt: "", durationMs: 0, msgCount: a.messages.length,
       messages: a.messages, toolResults: {}, toolCounts: {}, toolUseMsgUuid: {}, usage: u, peakContext: 0, result: "", persona: null,
     })),
