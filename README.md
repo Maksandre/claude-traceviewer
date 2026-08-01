@@ -55,6 +55,17 @@ docker compose up          # http://localhost:3099 — mounts ~/.claude read-onl
 
 Sessions are read from `~/.claude` by default. Override with the `CLAUDE_DIR` environment variable.
 
+## Image backup
+
+Claude Code prunes its `image-cache` aggressively, so transcripts outlive the screenshots they reference. Debrief copies every image referenced by a transcript it serves into a local backup store and serves it from there once the original disappears.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `DEBRIEF_BACKUP_TTL_DAYS` | `3` | Days a backup is kept after the original was last seen. `0` disables the store. |
+| `DEBRIEF_BACKUP_DIR` | `~/.debrief/file-backup` | Where backups live. The Docker setup points this at the `debrief-backup` volume. |
+
+A backup's retention clock resets every time the original is still present when referenced, so files only start aging out after they're actually gone.
+
 ## Cost numbers
 
 Costs are **notional**: every session is priced as if the tokens were billed at the public Anthropic API rates, regardless of how you actually pay. If you're on a Claude Pro/Max subscription, no money was charged per token — the figure shown is what the same usage would have cost on the metered API, which is a useful proxy for comparing sessions, agents, and runs against each other.

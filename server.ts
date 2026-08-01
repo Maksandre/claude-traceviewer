@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import crypto from "crypto";
 import fs from "fs";
 import path from "path";
 import os from "os";
@@ -20,23 +21,123 @@ const IMAGE_MIME: Record<string, string> = {
   ".bmp": "image/bmp",
 };
 
+// === File backup store ===
+// Claude Code prunes its image-cache aggressively, so transcripts outlive
+// the files they reference. Every image path seen in a served transcript is
+// copied into a local backup store and served from there once the original
+// disappears. Retention: DEBRIEF_BACKUP_TTL_DAYS (default 3) after the
+// original was last seen; 0 disables the store. Location: DEBRIEF_BACKUP_DIR.
+const BACKUP_TTL_DAYS = (() => {
+  const n = Number(process.env.DEBRIEF_BACKUP_TTL_DAYS ?? 3);
+  return Number.isFinite(n) && n >= 0 ? n : 3;
+})();
+const BACKUP_DIR = process.env.DEBRIEF_BACKUP_DIR || path.join(os.homedir(), ".debrief", "file-backup");
+const BACKUP_ENABLED = BACKUP_TTL_DAYS > 0;
+// Throttle per-path re-checks so the 2s session poll doesn't hammer the disk.
+const BACKUP_RECHECK_MS = 10 * 60_000;
+const backupCheckedAt = new Map<string, number>();
+
+// Keyed by the raw path string as it appears in the transcript — the client
+// requests /api/image with that exact string, so lookups always agree.
+function backupKey(raw: string): string {
+  return crypto.createHash("sha1").update(raw).digest("hex") + path.extname(raw).toLowerCase();
+}
+
+// Copy `src` into the store under `raw`'s key, or refresh the retention
+// clock when the copy is already current. Fire-and-forget.
+function backupFile(raw: string, src: string): void {
+  if (!BACKUP_ENABLED) return;
+  const now = Date.now();
+  const last = backupCheckedAt.get(raw);
+  if (last && now - last < BACKUP_RECHECK_MS) return;
+  backupCheckedAt.set(raw, now);
+  fs.stat(src, (err, stat) => {
+    if (err || !stat.isFile()) return;
+    const dest = path.join(BACKUP_DIR, backupKey(raw));
+    fs.stat(dest, (derr, dstat) => {
+      if (!derr && dstat.mtimeMs >= stat.mtimeMs) {
+        // original unchanged and still present — refresh the retention clock
+        fs.utimes(dest, new Date(), new Date(), () => {});
+        return;
+      }
+      fs.mkdir(BACKUP_DIR, { recursive: true }, (merr) => {
+        if (merr) return;
+        fs.copyFile(src, dest, () => {});
+      });
+    });
+  });
+}
+
+// Transcripts store the host's absolute path (e.g. /Users/<u>/.claude/...);
+// inside a container CLAUDE_DIR points at a mounted copy, so paths under
+// .claude are remapped. Anything else is read as-is (backup only — the live
+// /api/image endpoint still refuses to serve outside CLAUDE_DIR).
+function resolveImageSource(raw: string): string {
+  const marker = "/.claude/";
+  const ix = raw.indexOf(marker);
+  return ix >= 0 ? path.resolve(CLAUDE_DIR, raw.slice(ix + marker.length)) : raw;
+}
+
+const IMG_MARKER_RE = /\[Image:\s*source:\s*(\/[^\]\n]+?\.(?:png|jpe?g|gif|webp|bmp|svg))\s*\]/gi;
+
+// Scan raw transcript content for image references and back each one up
+// while the original still exists.
+function backupReferencedImages(content: string): void {
+  if (!BACKUP_ENABLED) return;
+  const seen = new Set<string>();
+  const re = new RegExp(IMG_MARKER_RE.source, IMG_MARKER_RE.flags);
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(content)) !== null) {
+    const raw = m[1];
+    if (seen.has(raw)) continue;
+    seen.add(raw);
+    backupFile(raw, resolveImageSource(raw));
+  }
+}
+
+function cleanupBackups(): void {
+  if (!BACKUP_ENABLED) return;
+  const cutoff = Date.now() - BACKUP_TTL_DAYS * 86_400_000;
+  fs.readdir(BACKUP_DIR, (err, files) => {
+    if (err) return;
+    for (const f of files) {
+      const p = path.join(BACKUP_DIR, f);
+      fs.stat(p, (serr, st) => {
+        if (!serr && st.isFile() && st.mtimeMs < cutoff) fs.unlink(p, () => {});
+      });
+    }
+  });
+}
+cleanupBackups();
+setInterval(cleanupBackups, 6 * 3_600_000).unref();
+
 app.get("/api/image", (req, res) => {
   try {
     const raw = String(req.query.path || "");
     if (!raw) { res.status(400).end(); return; }
-    // The trace file stores the host's absolute path (e.g. /Users/<user>/.claude/...),
-    // but inside a container CLAUDE_DIR points to a mounted copy. Normalize the
-    // request to a path that is relative to whatever CLAUDE_DIR is here.
-    const marker = "/.claude/";
-    const ix = raw.indexOf(marker);
-    const rel = ix >= 0 ? raw.slice(ix + marker.length) : raw.replace(/^\/+/, "");
-    const abs = path.resolve(CLAUDE_DIR, rel);
-    const within = path.relative(CLAUDE_DIR, abs);
-    if (within.startsWith("..") || path.isAbsolute(within)) { res.status(403).end(); return; }
-    const mime = IMAGE_MIME[path.extname(abs).toLowerCase()];
+    const mime = IMAGE_MIME[path.extname(raw).toLowerCase()];
     if (!mime) { res.status(415).end(); return; }
+
+    const serveBackup = () => {
+      if (!BACKUP_ENABLED) { res.status(404).end(); return; }
+      const dest = path.join(BACKUP_DIR, backupKey(raw));
+      fs.stat(dest, (err, stat) => {
+        if (err || !stat.isFile()) { res.status(404).end(); return; }
+        res.setHeader("Content-Type", mime);
+        res.setHeader("Cache-Control", "public, max-age=86400");
+        res.setHeader("X-Debrief-Backup", "1");
+        fs.createReadStream(dest).pipe(res);
+      });
+    };
+
+    // Live serving stays restricted to CLAUDE_DIR; anything else can only
+    // come out of the backup store (i.e. it was referenced by a transcript).
+    const abs = resolveImageSource(raw);
+    const within = path.relative(CLAUDE_DIR, abs);
+    if (within.startsWith("..") || path.isAbsolute(within)) { serveBackup(); return; }
     fs.stat(abs, (err, stat) => {
-      if (err || !stat.isFile()) { res.status(404).end(); return; }
+      if (err || !stat.isFile()) { serveBackup(); return; }
+      backupFile(raw, abs);
       res.setHeader("Content-Type", mime);
       res.setHeader("Cache-Control", "public, max-age=86400, immutable");
       fs.createReadStream(abs).pipe(res);
@@ -184,7 +285,9 @@ app.get("/api/projects/:project/sessions/:session", (req, res) => {
       res.status(304).end();
       return;
     }
-    const lines = fs.readFileSync(filePath, "utf-8").split("\n").filter(Boolean);
+    const content = fs.readFileSync(filePath, "utf-8");
+    backupReferencedImages(content);
+    const lines = content.split("\n").filter(Boolean);
     const records = lines.map((line) => {
       try {
         return JSON.parse(line);
@@ -337,7 +440,9 @@ app.get("/api/projects/:project/sessions/:session/agents/:agentId", (req, res) =
       return;
     }
 
-    const lines = fs.readFileSync(agentFile, "utf-8").split("\n").filter(Boolean);
+    const agentContent = fs.readFileSync(agentFile, "utf-8");
+    backupReferencedImages(agentContent);
+    const lines = agentContent.split("\n").filter(Boolean);
     const records = lines.map((line) => {
       try { return JSON.parse(line); } catch { return null; }
     }).filter(Boolean);

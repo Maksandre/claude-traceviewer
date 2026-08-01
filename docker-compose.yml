@@ -8,6 +8,13 @@ services:
       - "3099:3099"
     volumes:
       - ~/.claude:/data/.claude:ro
+      - debrief-backup:/data/backup
     environment:
       - CLAUDE_DIR=/data/.claude
       - PORT=3099
+      - DEBRIEF_BACKUP_DIR=/data/backup
+      # Days a backed-up file is kept after its original was last seen (0 disables)
+      - DEBRIEF_BACKUP_TTL_DAYS=3
+
+volumes:
+  debrief-backup:

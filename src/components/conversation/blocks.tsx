@@ -749,8 +749,29 @@ function ImageGallery({ items, onOpen }: { items: ImgItem[]; onOpen: (ix: number
   );
 }
 
+// Claude Code writes these synthetic user-turn markers when the user hits
+// Esc mid-turn; they're plumbing, not something the user typed.
+const INTERRUPT_RE = /^\[Request interrupted by user( for tool use)?\]$/;
+
+function interruptLabel(text: string): string | null {
+  const m = text.trim().match(INTERRUPT_RE);
+  if (!m) return null;
+  return m[1] ? "interrupted during tool call" : "interrupted by user";
+}
+
+function InterruptChip({ label }: { label: string }) {
+  return (
+    <div className="interrupt-row">
+      <Icons.close size={11} />
+      <span>{label}</span>
+    </div>
+  );
+}
+
 function UserBody({ msg }: { msg: NormMsg }) {
   const txt = msg.blocks.map(b => b.type === "text" ? (b.text || "") : "").join("\n");
+  const intr = interruptLabel(txt);
+  if (intr) return <InterruptChip label={intr} />;
   const cmd = txt.match(/<command-name>([^<]+)<\/command-name>/);
   const args = txt.match(/<command-args>([\s\S]*?)<\/command-args>/);
   const rootXml = !cmd && txt.trim().match(/^<([a-z0-9-]+)>([\s\S]*)<\/\1>\s*$/i);
@@ -784,6 +805,21 @@ export function UserGroup({ msgs, extraClass = "", permalinks = true }: { msgs: 
 
   if (msgs.length === 0) return null;
   const first = msgs[0];
+
+  // A group that is nothing but interruption markers gets a slim inline row
+  // instead of a full "You" bubble — the user didn't say anything.
+  const interruptLabels = msgs.map(m =>
+    interruptLabel(m.blocks.map(b => b.type === "text" ? (b.text || "") : "").join("\n")));
+  if (interruptLabels.every(Boolean) && !msgs.some(m => m.blocks.some(b => b.type === "image"))) {
+    return (
+      <div className={"msg interrupt-msg " + (extraClass || "fade-in")}>
+        <div className="msg-gutter" />
+        <div className="msg-main">
+          {interruptLabels.map((l, i) => <InterruptChip key={msgs[i].uuid || i} label={l!} />)}
+        </div>
+      </div>
+    );
+  }
 
   // Pool images across all messages in the group, strip image markers, and
   // (in a second pass) turn [Image #N] references into anchors keyed to the
