@@ -157,10 +157,18 @@ function App() {
   };
 
   const refreshProjectsAndSessions = useCallback(() => {
-    fetch("/api/projects").then(r => r.json()).then((d) => setProjects(normalizeProjects(d))).catch(() => {});
+    // Keep the previous state object when nothing changed so the 5s poll
+    // doesn't re-render the sidebar (and recompute its memos) for free.
+    fetch("/api/projects").then(r => r.json()).then((d) => {
+      const next = normalizeProjects(d);
+      setProjects(prev => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
+    }).catch(() => {});
     if (selectedProject) {
       fetch(`/api/projects/${encodeURIComponent(selectedProject)}/sessions`)
-        .then(r => r.json()).then(setSessions).catch(() => {});
+        .then(r => r.json()).then((d) => {
+          const next = Array.isArray(d) ? d : [];
+          setSessions(prev => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
+        }).catch(() => {});
     }
   }, [selectedProject]);
 
@@ -211,6 +219,15 @@ function App() {
     const id = setInterval(fetchSession, 5000);
     return () => clearInterval(id);
   }, [selectedProject, selectedSession, fetchSession, autoRefresh]);
+
+  // The sidebar polls on the same cadence, so new sessions/projects and the
+  // "live" dots show up without a manual refresh — even before any session
+  // is selected.
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const id = setInterval(refreshProjectsAndSessions, 5000);
+    return () => clearInterval(id);
+  }, [autoRefresh, refreshProjectsAndSessions]);
 
   // A subagent is "open" if the main session has an Agent/Task tool_use
   // whose matching tool_result hasn't landed yet. While that's the case the
