@@ -13,6 +13,36 @@ const PROJECTS_DIR = path.join(CLAUDE_DIR, "projects");
 const CODEX_DIR = process.env.CODEX_DIR || path.join(os.homedir(), ".codex");
 const CODEX_SESSIONS_DIR = path.join(CODEX_DIR, "sessions");
 
+// "Liked" sessions are starred in the sidebar and get their session file
+// snapshotted to a backup dir, independent from the source (and Claude
+// Code's/Codex's own retention) so a liked conversation survives cleanup.
+const DEBRIEF_DIR = process.env.DEBRIEF_DIR || path.join(os.homedir(), ".debrief");
+const LIKED_FILE = path.join(DEBRIEF_DIR, "liked-sessions.json");
+const BACKUPS_DIR = path.join(DEBRIEF_DIR, "backups");
+
+interface LikedEntry { likedAt: string; backedUpAt?: string }
+type LikedStore = Record<string, Record<string, LikedEntry>>; // project -> session -> entry
+
+function readLikedSessions(): LikedStore {
+  try {
+    return JSON.parse(fs.readFileSync(LIKED_FILE, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeLikedSessions(data: LikedStore): void {
+  fs.mkdirSync(DEBRIEF_DIR, { recursive: true });
+  fs.writeFileSync(LIKED_FILE, JSON.stringify(data, null, 2));
+}
+
+// A project/session name is a directory or file-stem name — never a path with
+// separators. Reject anything else before it reaches a path.join() headed for
+// the backups dir.
+function isSafeSegment(name: string): boolean {
+  return typeof name === "string" && name.length > 0 && !name.includes("..") && !name.includes("/") && !name.includes("\\");
+}
+
 const IMAGE_MIME: Record<string, string> = {
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -121,7 +151,8 @@ app.get("/api/projects", (_req, res) => {
     }
 
     projects.sort((a, b) => b.mtime - a.mtime);
-    res.json(projects);
+    const liked = readLikedSessions();
+    res.json(projects.map((p) => ({ ...p, likedCount: Object.keys(liked[p.name] || {}).length })));
   } catch {
     res.json([]);
   }
@@ -183,7 +214,8 @@ app.get("/api/projects/:project/sessions", (req, res) => {
         (a, b) =>
           new Date(b.modified).getTime() - new Date(a.modified).getTime()
       );
-    res.json(merged);
+    const liked = readLikedSessions()[req.params.project] || {};
+    res.json(merged.map((s) => ({ ...s, liked: !!liked[s.id], backedUpAt: liked[s.id]?.backedUpAt })));
   } catch {
     res.json([]);
   }
@@ -199,6 +231,55 @@ function resolveSessionFile(project: string, session: string): { filePath: strin
   if (codex && codex.projectKey === project) return { filePath: codex.path, provider: "codex" };
   return null;
 }
+
+// Snapshot a single session's file (plus its subagents dir, for Claude) into
+// BACKUPS_DIR/<project>/. Safe to call repeatedly — it just re-copies the
+// current file, so re-liking refreshes the backup with new messages.
+function backupSession(project: string, session: string): void {
+  const resolved = resolveSessionFile(project, session);
+  if (!resolved) throw new Error("Session not found");
+  const dest = path.join(BACKUPS_DIR, project);
+  fs.mkdirSync(dest, { recursive: true });
+  fs.copyFileSync(resolved.filePath, path.join(dest, path.basename(resolved.filePath)));
+  if (resolved.provider === "claude") {
+    const companionDir = path.join(PROJECTS_DIR, project, session);
+    if (fs.existsSync(companionDir) && fs.statSync(companionDir).isDirectory()) {
+      fs.cpSync(companionDir, path.join(dest, session), { recursive: true });
+    }
+  }
+}
+
+app.post("/api/projects/:project/sessions/:session/like", (req, res) => {
+  const { project, session } = req.params;
+  if (!isSafeSegment(project) || !isSafeSegment(session)) { res.status(400).json({ error: "Invalid project or session name" }); return; }
+  try {
+    backupSession(project, session);
+    const liked = readLikedSessions();
+    const forProject = liked[project] || (liked[project] = {});
+    const now = new Date().toISOString();
+    forProject[session] = { likedAt: forProject[session]?.likedAt || now, backedUpAt: now };
+    writeLikedSessions(liked);
+    res.json({ liked: true, backedUpAt: now });
+  } catch {
+    res.status(500).json({ error: "Failed to like session" });
+  }
+});
+
+app.delete("/api/projects/:project/sessions/:session/like", (req, res) => {
+  const { project, session } = req.params;
+  if (!isSafeSegment(project) || !isSafeSegment(session)) { res.status(400).json({ error: "Invalid project or session name" }); return; }
+  try {
+    const liked = readLikedSessions();
+    if (liked[project]) {
+      delete liked[project][session];
+      if (Object.keys(liked[project]).length === 0) delete liked[project];
+    }
+    writeLikedSessions(liked);
+    res.json({ liked: false });
+  } catch {
+    res.status(500).json({ error: "Failed to unlike session" });
+  }
+});
 
 app.get("/api/projects/:project/sessions/:session", (req, res) => {
   try {
@@ -481,24 +562,6 @@ app.delete("/api/projects/:project/sessions", (req, res) => {
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: "Failed to delete sessions" });
-  }
-});
-
-app.delete("/api/projects/:project/sessions/:session", (req, res) => {
-  try {
-    const resolved = resolveSessionFile(req.params.project, req.params.session);
-    if (!resolved) { res.status(404).json({ error: "Session not found" }); return; }
-    fs.unlinkSync(resolved.filePath);
-    // Also remove companion directory if exists (Claude sessions only)
-    if (resolved.provider === "claude") {
-      const dirPath = path.join(PROJECTS_DIR, req.params.project, req.params.session);
-      if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
-        fs.rmSync(dirPath, { recursive: true });
-      }
-    }
-    res.json({ ok: true });
-  } catch {
-    res.status(404).json({ error: "Session not found" });
   }
 });
 

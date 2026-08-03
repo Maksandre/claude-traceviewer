@@ -10,6 +10,11 @@ export interface SessionInfo {
   preview: string;
   /** Which CLI wrote the session. Absent on older server responses → claude. */
   provider?: Provider;
+  /** Starred in the sidebar. Liking also snapshots the session's file to a
+   * server-side backup dir, independent of source retention. */
+  liked?: boolean;
+  /** ISO timestamp of the last backup snapshot; set once liked. */
+  backedUpAt?: string;
 }
 
 export interface ProjectMeta {
@@ -25,6 +30,8 @@ export interface ProjectMeta {
   /** Per-provider session counts; sessionCount is their sum. */
   claudeCount?: number;
   codexCount?: number;
+  /** Number of sessions in this project that are liked/backed up. */
+  likedCount?: number;
 }
 
 export interface ContentBlock {

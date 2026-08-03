@@ -60,6 +60,7 @@ export const Icons = {
   copy: (p: IconProps = {}) => <Svg {...p}><rect x="9" y="9" width="12" height="12" rx="2" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></Svg>,
   link: (p: IconProps = {}) => <Svg {...p}><path d="M10 14a4 4 0 0 0 5.66 0l3-3a4 4 0 0 0-5.66-5.66l-1.5 1.5M14 10a4 4 0 0 0-5.66 0l-3 3a4 4 0 0 0 5.66 5.66l1.5-1.5" /></Svg>,
   workflow: (p: IconProps = {}) => <Svg {...p}><circle cx="5" cy="12" r="2.4" /><circle cx="18.5" cy="5" r="2.4" /><circle cx="18.5" cy="12" r="2.4" /><circle cx="18.5" cy="19" r="2.4" /><path d="M7.4 12h3.1M10.5 12V5.3a.3.3 0 0 1 .3-.3h5.3M10.5 12h5.6M10.5 12v6.7a.3.3 0 0 0 .3.3h5.3" /></Svg>,
+  heart: (p: IconProps = {}) => <Svg {...p}><path d="M20.8 4.6a5.5 5.5 0 0 0-7.8 0L12 5.7l-1-1.1a5.5 5.5 0 0 0-7.8 7.8L12 21.2l8.8-8.8a5.5 5.5 0 0 0 0-7.8z" /></Svg>,
 };
 
 export function toolIcon(name?: string | null) {

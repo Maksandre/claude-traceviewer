@@ -152,9 +152,26 @@ function App() {
             providers: Array.isArray(it?.providers) ? it.providers : undefined,
             claudeCount: typeof it?.claudeCount === "number" ? it.claudeCount : undefined,
             codexCount: typeof it?.codexCount === "number" ? it.codexCount : undefined,
+            likedCount: typeof it?.likedCount === "number" ? it.likedCount : undefined,
           }
     ).filter((p) => p.name);
   };
+
+  // Optimistic like/unlike: flip the flag immediately so the heart and sort
+  // order react without waiting on the round trip, then reconcile with
+  // whatever the server actually persisted (or revert on failure).
+  const toggleLikeSession = useCallback((projectId: string, sessionId: string, wasLiked: boolean) => {
+    setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, liked: !wasLiked } : s));
+    fetch(`/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/like`, { method: wasLiked ? "DELETE" : "POST" })
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then((d) => {
+        setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, liked: !!d.liked, backedUpAt: d.backedUpAt ?? s.backedUpAt } : s));
+      })
+      .catch(() => {
+        setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, liked: wasLiked } : s));
+        alert(wasLiked ? "Failed to unlike session" : "Failed to like/back up session");
+      });
+  }, []);
 
   const refreshProjectsAndSessions = useCallback(() => {
     // Keep the previous state object when nothing changed so the 5s poll
@@ -320,13 +337,7 @@ function App() {
         sessions={sessions}
         selectedSession={selectedSession}
         onSelectSession={(s) => { setSelectedSession(s); setTargetMsg(null); setTargetBlock(null); if (isMobile()) setSidebarOpen(false); }}
-        onDeleteSession={(id) => {
-          fetch(`/api/projects/${encodeURIComponent(selectedProject!)}/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
-            .then(() => {
-              setSessions(s => s.filter(x => x.id !== id));
-              if (selectedSession === id) { setSelectedSession(null); setRecords([]); }
-            });
-        }}
+        onToggleLikeSession={toggleLikeSession}
         onDeleteAllSessions={() => {
           fetch(`/api/projects/${encodeURIComponent(selectedProject!)}/sessions`, { method: "DELETE" })
             .then(() => { setSessions([]); setSelectedSession(null); setRecords([]); });
