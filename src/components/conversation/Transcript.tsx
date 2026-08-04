@@ -11,11 +11,18 @@ import { ApplyPatchCard } from "./ApplyPatchCard";
 // no stable id) get a deterministic `<msg-uuid>:<index>` block id.
 interface BlockEntry { b: NormBlock; msgUuid: string; idxInMsg: number; }
 
+// Tool names that spawn a nested subagent, across both CLIs: Claude Code's
+// Agent/Task tool, and Codex CLI's spawn_agent (multi-agent mode). Blocks
+// with one of these names get the expandable AgentSpawnCard treatment.
+function isAgentSpawn(name: string | undefined): boolean {
+  return name === "Agent" || name === "Task" || name === "spawn_agent";
+}
+
 function entityLabelFor(b: NormBlock): string {
   if (b.type === "text") return "text block";
   if (b.type === "thinking") return "thinking block";
   if (b.type === "tool_use") {
-    if (b.name === "Agent" || b.name === "Task") return "subagent spawn";
+    if (isAgentSpawn(b.name)) return "subagent spawn";
     return `${b.name || "tool"} call`;
   }
   return "block";
@@ -71,6 +78,34 @@ function buildGroups(messages: NormMsg[]): Group[] {
   return groups;
 }
 
+type StepItem =
+  | { kind: "step"; m: NormMsg; i: number }
+  | { kind: "empty-run"; msgs: NormMsg[]; from: number; to: number };
+
+// Runs of 2+ consecutive steps with no visible content (reasoning-only API
+// calls — the model spent tokens but produced neither text, tool calls, nor
+// a renderable reasoning summary) collapse into one row with the combined
+// cost, instead of a wall of bare "step N  $x" lines. A lone empty step stays
+// as a normal step — it's already minimal, nothing to gain by collapsing it.
+function groupSteps(msgs: NormMsg[]): StepItem[] {
+  const out: StepItem[] = [];
+  let i = 0;
+  while (i < msgs.length) {
+    if (msgs[i].blocks.length === 0) {
+      let j = i;
+      while (j < msgs.length && msgs[j].blocks.length === 0) j++;
+      if (j - i >= 2) {
+        out.push({ kind: "empty-run", msgs: msgs.slice(i, j), from: i, to: j - 1 });
+        i = j;
+        continue;
+      }
+    }
+    out.push({ kind: "step", m: msgs[i], i });
+    i++;
+  }
+  return out;
+}
+
 function sumUsage(msgs: NormMsg[]) {
   return msgs.reduce((a, m) => ({
     input: a.input + m.usage.input,
@@ -103,7 +138,7 @@ function blockMatchesQuery(
   if (!q) return true;
   if (b.type === "text" || b.type === "thinking") return true;
   if (b.type !== "tool_use") return true;
-  if ((b.name === "Agent" || b.name === "Task") && b.id) {
+  if (isAgentSpawn(b.name) && b.id) {
     const agent = agentsByToolUse[b.id];
     if (agent && forceExpandedAgents?.has(agent.id)) return true;
   }
@@ -176,7 +211,7 @@ function Blocks({ entries, getResult, agentsByToolUse, workflowsByToolUse, onOpe
       return;
     }
     if (b.type === "tool_use") {
-      if (b.name === "Agent" || b.name === "Task") {
+      if (isAgentSpawn(b.name)) {
         const agent = b.id ? agentsByToolUse[b.id] : undefined;
         const force = !!(agent && forceExpandedAgents?.has(agent.id));
         rendered.push(wrap(i, b, msgUuid, idxInMsg,
@@ -249,7 +284,7 @@ function AgentSpawnCard({ block, agent, agentsByToolUse, onOpen, settings, query
   const inlineExpandable = !!agent && agent.messages.length > 0;
   const openable = !!agent;
   const expanded = inlineExpandable && (open || !!forceExpanded);
-  const type = (block.input?.subagent_type as string) || (agent?.agentType || "agent");
+  const type = (block.input?.subagent_type as string) || (block.input?.task_name as string) || (agent?.agentType || "agent");
   const hue = agent ? agentMeta(agent.agentType).hue : agentMeta(type).hue;
   const col = `oklch(0.70 0.12 ${hue})`;
   const modelStr = agent ? agent.model : (block.input?.model as string | undefined);
@@ -285,7 +320,7 @@ function AgentSpawnCard({ block, agent, agentsByToolUse, onOpen, settings, query
             ) : null}
             <span className="agent-spawn-arrow">Subagent</span>
           </div>
-          <div className="agent-spawn-desc">{block.input?.description || ""}</div>
+          <div className="agent-spawn-desc">{(block.input?.description as string) || agent?.description || ""}</div>
           {agent ? (
             <div className="agent-spawn-stats">
               <span><Icons.layers size={11} /> {agent.msgCount} msgs</span>
@@ -491,25 +526,50 @@ function AssistantGroup({ group, getResult, agentsByToolUse, workflowsByToolUse,
           ) : (
             // Multi-step group: each step is one API call with its own bill.
             // The group header keeps the total; each step shows its share.
-            msgs.map((m, i) => (
-              <div className="asst-step" key={m.uuid}>
-                <div
-                  className="asst-step-head"
-                  title={`${fmtTime(m.ts)} · in ${fmtTokens(m.usage.input)} · out ${fmtTokens(m.usage.output)} · cache write ${fmtTokens(m.usage.cw)} · cache read ${fmtTokens(m.usage.cr)}`}
-                >
-                  <span className="asst-step-n">step {i + 1}</span>
-                  <span className="asst-step-rule" />
-                  {m.usage.cost > 0 ? <span className="asst-step-cost tnum">{fmtCost(m.usage.cost)}</span> : null}
-                  {(() => {
-                    const cum = cumCostByMsg?.get(m.uuid);
-                    return cum && cum > m.usage.cost
-                      ? <span className="asst-step-cum tnum" title="Session running total up to here (subagents counted at spawn)">Σ {fmtCost(cum)}</span>
-                      : null;
-                  })()}
+            // Runs of empty (reasoning-only) steps collapse into one row.
+            groupSteps(msgs).map((item) => {
+              if (item.kind === "empty-run") {
+                const cost = item.msgs.reduce((s, m) => s + m.usage.cost, 0);
+                const last = item.msgs[item.msgs.length - 1];
+                const cum = cumCostByMsg?.get(last.uuid);
+                return (
+                  <div className="asst-step asst-step-empty" key={last.uuid}>
+                    <div
+                      className="asst-step-head"
+                      title={`${item.msgs.length} reasoning-only turns — no visible output, tokens still billed`}
+                    >
+                      <span className="asst-step-n">steps {item.from + 1}–{item.to + 1}</span>
+                      <span className="asst-step-rule" />
+                      <span className="asst-step-empty-label">{item.msgs.length} silent reasoning turns</span>
+                      {cost > 0 ? <span className="asst-step-cost tnum">{fmtCost(cost)}</span> : null}
+                      {cum && cum > cost
+                        ? <span className="asst-step-cum tnum" title="Session running total up to here (subagents counted at spawn)">Σ {fmtCost(cum)}</span>
+                        : null}
+                    </div>
+                  </div>
+                );
+              }
+              const { m, i } = item;
+              return (
+                <div className="asst-step" key={m.uuid}>
+                  <div
+                    className="asst-step-head"
+                    title={`${fmtTime(m.ts)} · in ${fmtTokens(m.usage.input)} · out ${fmtTokens(m.usage.output)} · cache write ${fmtTokens(m.usage.cw)} · cache read ${fmtTokens(m.usage.cr)}`}
+                  >
+                    <span className="asst-step-n">step {i + 1}</span>
+                    <span className="asst-step-rule" />
+                    {m.usage.cost > 0 ? <span className="asst-step-cost tnum">{fmtCost(m.usage.cost)}</span> : null}
+                    {(() => {
+                      const cum = cumCostByMsg?.get(m.uuid);
+                      return cum && cum > m.usage.cost
+                        ? <span className="asst-step-cum tnum" title="Session running total up to here (subagents counted at spawn)">Σ {fmtCost(cum)}</span>
+                        : null;
+                    })()}
+                  </div>
+                  <Blocks entries={blocksFor(m)} {...blockProps} />
                 </div>
-                <Blocks entries={blocksFor(m)} {...blockProps} />
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
@@ -677,7 +737,7 @@ export function useTranscriptModel({ messages, toolResults, agentsByToolUse, que
       for (const m of g.msgs || []) {
         for (const b of m.blocks) {
           if (b.type !== "tool_use") continue;
-          if (b.name !== "Agent" && b.name !== "Task") continue;
+          if (!isAgentSpawn(b.name)) continue;
           const a = b.id ? agentsByToolUse[b.id] : undefined;
           if (a && agentHaystack.get(a.id)?.includes(q)) { expanded.add(a.id); keep = true; }
         }

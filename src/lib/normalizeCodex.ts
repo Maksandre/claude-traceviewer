@@ -6,7 +6,7 @@ import {
   buildModelStats,
   dominantEffort,
 } from "./normalize";
-import type { NormBlock, NormMsg, NormToolResult, NormTrace } from "./normalize";
+import type { NormAgent, NormBlock, NormMsg, NormToolResult, NormTrace } from "./normalize";
 
 // === Codex CLI trace normalization ===
 // Turns a Codex rollout file's records into the same NormTrace shape Claude
@@ -230,7 +230,7 @@ export function normalizeCodexTrace(session: string, records: CodexRecord[]): No
       }
       if (kind === "function_call_output" || kind === "custom_tool_call_output") {
         if (p.call_id) {
-          const output = p.output || "";
+          const output = typeof p.output === "string" ? p.output : partsText(p.output);
           toolResults[p.call_id] = { content: output, is_error: outputIsError(output) };
         }
         continue;
@@ -350,5 +350,91 @@ export function normalizeCodexTrace(session: string, records: CodexRecord[]): No
     agents: [],
     workflows: [],
     stats: { totals: usage, modelMix, toolFreq, cacheRatio, modelStats },
+  };
+}
+
+interface CodexAgentListing {
+  id: string;
+  toolUseId: string;
+  parentId: string;
+  agentType: string;
+  description: string;
+  startedAt: string;
+}
+
+function lastAssistantText(messages: NormMsg[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].role !== "assistant") continue;
+    const t = messages[i].blocks.find((b) => b.type === "text")?.text;
+    if (t) return t;
+  }
+  return "";
+}
+
+// Codex's spawn_agent tool creates independent rollout files rather than
+// nesting a subagent's transcript inside the parent's own JSONL (see
+// normalizeCodexTrace's header comment). fetchNormalizedTrace (normalize.ts)
+// resolves Claude Code's equivalent by walking a subagents/ directory on the
+// server; here the server instead walks Codex's own parent_thread_id chain
+// (server/codex.ts: codexAgentsForSession) and hands back a flat listing —
+// this just fetches each child's records and builds the matching NormAgent.
+export async function fetchNormalizedCodexTrace(project: string, session: string, records: CodexRecord[]): Promise<NormTrace> {
+  const main = normalizeCodexTrace(session, records);
+
+  let listing: CodexAgentListing[] = [];
+  try {
+    const r = await fetch(`/api/projects/${encodeURIComponent(project)}/sessions/${encodeURIComponent(session)}/agents`);
+    if (r.ok) {
+      const data = await r.json();
+      if (Array.isArray(data)) listing = data;
+    }
+  } catch { /* no spawn_agent children found — the main transcript still renders */ }
+
+  const agents: NormAgent[] = [];
+  for (const item of listing) {
+    try {
+      const r = await fetch(`/api/projects/${encodeURIComponent(project)}/sessions/${encodeURIComponent(item.id)}`);
+      if (!r.ok) continue;
+      const childRecords = await r.json();
+      if (!Array.isArray(childRecords) || childRecords.length === 0) continue;
+      const child = normalizeCodexTrace(item.id, childRecords as CodexRecord[]);
+      agents.push({
+        id: item.id,
+        toolUseId: item.toolUseId,
+        agentType: item.agentType,
+        description: item.description,
+        model: child.session.models[0] || "",
+        effort: child.session.effort,
+        prompt: "",
+        startedAt: child.session.startedAt || item.startedAt,
+        endedAt: child.session.endedAt,
+        durationMs: child.session.durationMs,
+        msgCount: child.main.messages.length,
+        messages: child.main.messages,
+        toolResults: child.main.toolResults,
+        toolCounts: child.main.toolCounts,
+        toolUseMsgUuid: child.main.toolUseMsgUuid,
+        usage: child.main.usage,
+        peakContext: child.main.peakContext,
+        result: lastAssistantText(child.main.messages),
+        persona: null,
+        parentId: item.parentId,
+      });
+    } catch { /* skip this child, keep the rest of the tree */ }
+  }
+
+  const allTotals = EMPTY_USAGE();
+  addUsage(allTotals, main.main.usage);
+  for (const a of agents) addUsage(allTotals, a.usage);
+  const { modelMix, modelStats } = buildModelStats([main.main.messages, ...agents.map((a) => a.messages)]);
+  const toolFreq: Record<string, number> = { ...main.stats.toolFreq };
+  for (const a of agents) for (const [k, v] of Object.entries(a.toolCounts)) toolFreq[k] = (toolFreq[k] || 0) + v;
+  const ctxTotal = allTotals.input + allTotals.cw + allTotals.cr;
+  const cacheRatio = ctxTotal > 0 ? allTotals.cr / ctxTotal : 0;
+
+  return {
+    ...main,
+    agents,
+    stats: { totals: allTotals, modelMix, toolFreq, cacheRatio, modelStats },
   };
 }

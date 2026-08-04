@@ -3,7 +3,7 @@ import cors from "cors";
 import fs from "fs";
 import path from "path";
 import os from "os";
-import { codexEntriesForProject, codexProjects, codexSessionsForProject, findCodexSession } from "./server/codex";
+import { codexAgentsForSession, codexEntriesForProject, codexProjects, codexSessionsForProject, findCodexSession } from "./server/codex";
 
 const app = express();
 app.use(cors());
@@ -488,7 +488,17 @@ app.get("/api/projects/:project/sessions/:session/agents", (req, res) => {
       req.params.session,
       "subagents"
     );
-    if (!fs.existsSync(subagentsDir)) { res.json([]); return; }
+    if (!fs.existsSync(subagentsDir)) {
+      // Not a Claude session (or one with no subagents dir yet) — check
+      // whether it's a Codex session with spawn_agent children instead.
+      const codexSession = findCodexSession(CODEX_SESSIONS_DIR, req.params.session);
+      if (codexSession && codexSession.projectKey === req.params.project) {
+        res.json(codexAgentsForSession(CODEX_SESSIONS_DIR, codexSession));
+      } else {
+        res.json([]);
+      }
+      return;
+    }
 
     const lineCountOf = (jsonlFile: string) => {
       try { return fs.readFileSync(jsonlFile, "utf-8").split("\n").filter(Boolean).length; }

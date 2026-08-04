@@ -113,6 +113,7 @@ export function toolSummary(name: string | undefined, input: any): string {
   if (name === "Glob") return i.pattern || "";
   if (name === "WebFetch" || name === "WebSearch") return i.url || i.query || "";
   if (name === "Agent" || name === "Task") return i.description || i.subagent_type || "";
+  if (name === "spawn_agent") return i.task_name || "";
   if (name === "ToolSearch") return i.query || "";
   // Codex CLI tools
   if (name === "exec_command" || name === "shell")

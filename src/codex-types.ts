@@ -57,8 +57,9 @@ export interface CodexResponseItem {
   input?: string; // raw string (custom_tool_call, e.g. an apply_patch body)
   call_id?: string;
   status?: string;
-  // function_call_output / custom_tool_call_output
-  output?: string;
+  // function_call_output / custom_tool_call_output — usually a plain string,
+  // but custom_tool_call_output can arrive as content parts like `content`.
+  output?: string | CodexContentPart[];
   // reasoning
   summary?: { type?: string; text?: string }[];
   encrypted_content?: string;

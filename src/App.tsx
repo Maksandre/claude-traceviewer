@@ -10,7 +10,7 @@ import type { ProjectMeta, SessionInfo, TraceRecord } from "./types";
 import type { CodexRecord } from "./codex-types";
 import { isCodexRecords } from "./codex-types";
 import { fetchNormalizedTrace, type NormTrace } from "./lib/normalize";
-import { normalizeCodexTrace } from "./lib/normalizeCodex";
+import { fetchNormalizedCodexTrace } from "./lib/normalizeCodex";
 import { PermalinkContext } from "./lib/permalinkCtx";
 import "./App.css";
 
@@ -292,8 +292,10 @@ function App() {
       return;
     }
     if (isCodexRecords(records)) {
-      setTrace(normalizeCodexTrace(selectedSession, records as unknown as CodexRecord[]));
-      return;
+      fetchNormalizedCodexTrace(selectedProject, selectedSession, records as unknown as CodexRecord[]).then(t => {
+        if (!cancelled) setTrace(t);
+      });
+      return () => { cancelled = true; };
     }
     fetchNormalizedTrace(selectedProject, selectedSession, records).then(t => {
       if (!cancelled) setTrace(t);

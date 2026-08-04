@@ -478,6 +478,9 @@ button { font-family: inherit; }
 .asst-step-cost { font-family: var(--ff-mono); font-size: 10.5px; color: var(--tx-3); flex-shrink: 0; }
 /* Running session total — quieter than the per-call price it sits beside. */
 .msg-cum, .asst-step-cum { font-family: var(--ff-mono); font-size: 10px; color: var(--tx-3); opacity: .75; flex-shrink: 0; cursor: default; }
+/* Collapsed run of reasoning-only steps (encrypted reasoning, no visible
+   output) — a single row standing in for several bare cost lines. */
+.asst-step-empty-label { font-size: 10.5px; font-style: italic; color: var(--tx-3); opacity: .7; flex-shrink: 0; }
 
 .msg.sysrow { display: block; }
 
