@@ -113,9 +113,27 @@ export function toolSummary(name: string | undefined, input: any): string {
   if (name === "Glob") return i.pattern || "";
   if (name === "WebFetch" || name === "WebSearch") return i.url || i.query || "";
   if (name === "Agent" || name === "Task") return i.description || i.subagent_type || "";
+  if (name === "spawn_agent") return i.task_name || "";
   if (name === "ToolSearch") return i.query || "";
+  // Codex CLI tools
+  if (name === "exec_command" || name === "shell")
+    return Array.isArray(i.command) ? i.command.join(" ") : (i.cmd || i.command || "");
+  if (name === "apply_patch") return patchedFiles(String(i.input || "")).map(f => f.path).join(", ");
+  if (name === "web_search_call" || name === "web_search") return i.query || "";
   const first = Object.values(i)[0];
   return typeof first === "string" ? first : JSON.stringify(i).slice(0, 80);
+}
+
+/** Files touched by an apply_patch body ("*** Add File: x", "*** Update
+ * File: y", "*** Delete File: z"). */
+export function patchedFiles(patch: string): { op: "add" | "update" | "delete"; path: string }[] {
+  const out: { op: "add" | "update" | "delete"; path: string }[] = [];
+  const re = /^\*\*\*\s+(Add|Update|Delete) File:\s*(.+)$/gm;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(patch))) {
+    out.push({ op: m[1].toLowerCase() as "add" | "update" | "delete", path: m[2].trim() });
+  }
+  return out;
 }
 
 function resultText(content: NormToolResult["content"] | undefined): string {
@@ -152,7 +170,7 @@ function ToolInput({ input }: { input: any }) {
     <div className="kv">
       {entries.map(([k, v]) => {
         const long = typeof v === "string" && ((v as string).length > 80 || (v as string).includes("\n"));
-        if (k === "prompt" || (long && (k === "command" || k === "content" || k === "old_string" || k === "new_string"))) {
+        if (k === "prompt" || (long && (k === "command" || k === "content" || k === "old_string" || k === "new_string" || k === "input" || k === "cmd"))) {
           return (
             <div className="kv-row col" key={k}>
               <span className="kv-k mono">{k}</span>
@@ -608,6 +626,10 @@ function attachmentSummary(a: Record<string, unknown>): AttachmentSummary {
       return { label: "task reminder", brief: typeof a.itemCount === "number" ? String(a.itemCount) : "", detail: detailText(a.content) };
     case "opened_file_in_ide":
       return { label: "opened in IDE", brief: String(a.filename || "").split("/").pop() || "", detail: "" };
+    case "codex_context":
+      // Harness-injected user/developer messages from a Codex session
+      // (environment context, permission instructions, AGENTS.md, …).
+      return { label: String(a.label || "context"), brief: "", detail: detailText(a.content) };
     case "diagnostics":
       return { label: "diagnostics", brief: `${countOf(a.files)} files`, detail: JSON.stringify(a.files ?? a, null, 2) };
     default: {

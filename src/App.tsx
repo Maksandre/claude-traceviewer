@@ -7,7 +7,10 @@ import { AgentsView } from "./components/AgentsView";
 import { StatsView } from "./components/StatsView";
 import { AgentDrawer } from "./components/AgentDrawer";
 import type { ProjectMeta, SessionInfo, TraceRecord } from "./types";
+import type { CodexRecord } from "./codex-types";
+import { isCodexRecords } from "./codex-types";
 import { fetchNormalizedTrace, type NormTrace } from "./lib/normalize";
+import { fetchNormalizedCodexTrace } from "./lib/normalizeCodex";
 import { PermalinkContext } from "./lib/permalinkCtx";
 import "./App.css";
 
@@ -141,15 +144,48 @@ function App() {
     return data.map((it: any) =>
       typeof it === "string"
         ? { name: it, sessionCount: 0, mtime: 0 }
-        : { name: String(it?.name || ""), sessionCount: Number(it?.sessionCount || 0), mtime: Number(it?.mtime || 0), cwd: typeof it?.cwd === "string" ? it.cwd : undefined }
+        : {
+            name: String(it?.name || ""),
+            sessionCount: Number(it?.sessionCount || 0),
+            mtime: Number(it?.mtime || 0),
+            cwd: typeof it?.cwd === "string" ? it.cwd : undefined,
+            providers: Array.isArray(it?.providers) ? it.providers : undefined,
+            claudeCount: typeof it?.claudeCount === "number" ? it.claudeCount : undefined,
+            codexCount: typeof it?.codexCount === "number" ? it.codexCount : undefined,
+            likedCount: typeof it?.likedCount === "number" ? it.likedCount : undefined,
+          }
     ).filter((p) => p.name);
   };
 
+  // Optimistic like/unlike: flip the flag immediately so the heart and sort
+  // order react without waiting on the round trip, then reconcile with
+  // whatever the server actually persisted (or revert on failure).
+  const toggleLikeSession = useCallback((projectId: string, sessionId: string, wasLiked: boolean) => {
+    setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, liked: !wasLiked } : s));
+    fetch(`/api/projects/${encodeURIComponent(projectId)}/sessions/${encodeURIComponent(sessionId)}/like`, { method: wasLiked ? "DELETE" : "POST" })
+      .then(r => { if (!r.ok) throw new Error(); return r.json(); })
+      .then((d) => {
+        setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, liked: !!d.liked, backedUpAt: d.backedUpAt ?? s.backedUpAt } : s));
+      })
+      .catch(() => {
+        setSessions(prev => prev.map(s => s.id === sessionId ? { ...s, liked: wasLiked } : s));
+        alert(wasLiked ? "Failed to unlike session" : "Failed to like/back up session");
+      });
+  }, []);
+
   const refreshProjectsAndSessions = useCallback(() => {
-    fetch("/api/projects").then(r => r.json()).then((d) => setProjects(normalizeProjects(d))).catch(() => {});
+    // Keep the previous state object when nothing changed so the 5s poll
+    // doesn't re-render the sidebar (and recompute its memos) for free.
+    fetch("/api/projects").then(r => r.json()).then((d) => {
+      const next = normalizeProjects(d);
+      setProjects(prev => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
+    }).catch(() => {});
     if (selectedProject) {
       fetch(`/api/projects/${encodeURIComponent(selectedProject)}/sessions`)
-        .then(r => r.json()).then(setSessions).catch(() => {});
+        .then(r => r.json()).then((d) => {
+          const next = Array.isArray(d) ? d : [];
+          setSessions(prev => JSON.stringify(prev) === JSON.stringify(next) ? prev : next);
+        }).catch(() => {});
     }
   }, [selectedProject]);
 
@@ -177,6 +213,9 @@ function App() {
             const b = next[next.length - 1];
             if (a === b) return prev;
             if (a && b && a.uuid && a.uuid === b.uuid && a.timestamp === b.timestamp) return prev;
+            // Codex records have no uuid — the timestamp of the tail record
+            // is the only cheap identity to compare.
+            if (a && b && !a.uuid && !b.uuid && a.timestamp && a.timestamp === b.timestamp) return prev;
           }
           return next;
         });
@@ -197,6 +236,15 @@ function App() {
     const id = setInterval(fetchSession, 5000);
     return () => clearInterval(id);
   }, [selectedProject, selectedSession, fetchSession, autoRefresh]);
+
+  // The sidebar polls on the same cadence, so new sessions/projects and the
+  // "live" dots show up without a manual refresh — even before any session
+  // is selected.
+  useEffect(() => {
+    if (!autoRefresh) return;
+    const id = setInterval(refreshProjectsAndSessions, 5000);
+    return () => clearInterval(id);
+  }, [autoRefresh, refreshProjectsAndSessions]);
 
   // A subagent is "open" if the main session has an Agent/Task tool_use
   // whose matching tool_result hasn't landed yet. While that's the case the
@@ -234,12 +282,20 @@ function App() {
     return () => clearInterval(id);
   }, [hasOpenSubagent, autoRefresh]);
 
-  // normalize whenever records change
+  // normalize whenever records change; the record shape (not a threaded
+  // provider flag) picks the normalizer, so deep links work without knowing
+  // the provider up front
   useEffect(() => {
     let cancelled = false;
     if (!selectedProject || !selectedSession || records.length === 0) {
       setTrace(null);
       return;
+    }
+    if (isCodexRecords(records)) {
+      fetchNormalizedCodexTrace(selectedProject, selectedSession, records as unknown as CodexRecord[]).then(t => {
+        if (!cancelled) setTrace(t);
+      });
+      return () => { cancelled = true; };
     }
     fetchNormalizedTrace(selectedProject, selectedSession, records).then(t => {
       if (!cancelled) setTrace(t);
@@ -261,11 +317,14 @@ function App() {
     const last = msgs[msgs.length - 1];
     if (last.role === "user") return true;
     const s = last.stopReason;
-    return !(s === "end_turn" || s === "stop_sequence" || s === "max_tokens");
+    return !(s === "end_turn" || s === "stop_sequence" || s === "max_tokens" || s === "aborted");
   }, [trace]);
   const drawerAgent = useMemo(() => trace?.agents.find(a => a.id === drawerId) || null, [trace, drawerId]);
   const agentCount = trace?.agents.length || 0;
   const hasSession = !!selectedSession;
+  // Codex has no subagent concept — the Agents tab would always be empty.
+  const isCodexSession = trace?.session.provider === "codex";
+  const effectiveView = isCodexSession && view === "agents" ? "conversation" : view;
 
   return (
     <PermalinkContext.Provider value={permalinkApi}>
@@ -280,13 +339,7 @@ function App() {
         sessions={sessions}
         selectedSession={selectedSession}
         onSelectSession={(s) => { setSelectedSession(s); setTargetMsg(null); setTargetBlock(null); if (isMobile()) setSidebarOpen(false); }}
-        onDeleteSession={(id) => {
-          fetch(`/api/projects/${encodeURIComponent(selectedProject!)}/sessions/${encodeURIComponent(id)}`, { method: "DELETE" })
-            .then(() => {
-              setSessions(s => s.filter(x => x.id !== id));
-              if (selectedSession === id) { setSelectedSession(null); setRecords([]); }
-            });
-        }}
+        onToggleLikeSession={toggleLikeSession}
         onDeleteAllSessions={() => {
           fetch(`/api/projects/${encodeURIComponent(selectedProject!)}/sessions`, { method: "DELETE" })
             .then(() => { setSessions([]); setSelectedSession(null); setRecords([]); });
@@ -296,9 +349,10 @@ function App() {
       {sidebarOpen ? <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} /> : null}
       <main className="main">
         <Toolbar
-          view={view}
+          view={effectiveView}
           onViewChange={setView}
           agentCount={agentCount}
+          hideAgents={isCodexSession}
           hasSession={hasSession}
           onRefresh={handleRefresh}
           refreshSpin={refreshSpin}
@@ -340,9 +394,9 @@ function App() {
             </div>
           ) : !trace ? (
             <div className="empty-state"><div>Loading trace…</div></div>
-          ) : view === "conversation" ? (
+          ) : effectiveView === "conversation" ? (
             <ConversationView trace={trace} query={effectiveQuery} onOpenAgent={setDrawerId} settings={settings} live={isWorking} targetMsg={targetMsg} targetBlock={targetBlock} />
-          ) : view === "agents" ? (
+          ) : effectiveView === "agents" ? (
             <AgentsView
               trace={trace}
               settings={settings}

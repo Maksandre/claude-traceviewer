@@ -6,6 +6,8 @@ interface Props {
   view: ViewKey;
   onViewChange: (v: ViewKey) => void;
   agentCount: number;
+  /** Hide the Agents tab entirely (Codex sessions have no subagents). */
+  hideAgents?: boolean;
   hasSession: boolean;
   onRefresh: () => void;
   refreshSpin: number;
@@ -55,6 +57,7 @@ export function Toolbar({
   view,
   onViewChange,
   agentCount,
+  hideAgents,
   hasSession,
   onRefresh,
   refreshSpin,
@@ -105,7 +108,7 @@ export function Toolbar({
         <Icons.layers size={16} />
       </button>
       <nav className="viewtabs">
-        {VIEWS.map(v => (
+        {VIEWS.filter(v => !(hideAgents && v.k === "agents")).map(v => (
           <button
             key={v.k}
             className={"viewtab " + (view === v.k ? "active" : "")}

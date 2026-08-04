@@ -3,12 +3,45 @@ import cors from "cors";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import { codexAgentsForSession, codexEntriesForProject, codexProjects, codexSessionsForProject, findCodexSession } from "./server/codex";
 
 const app = express();
 app.use(cors());
 
 const CLAUDE_DIR = process.env.CLAUDE_DIR || path.join(os.homedir(), ".claude");
 const PROJECTS_DIR = path.join(CLAUDE_DIR, "projects");
+const CODEX_DIR = process.env.CODEX_DIR || path.join(os.homedir(), ".codex");
+const CODEX_SESSIONS_DIR = path.join(CODEX_DIR, "sessions");
+
+// "Liked" sessions are starred in the sidebar and get their session file
+// snapshotted to a backup dir, independent from the source (and Claude
+// Code's/Codex's own retention) so a liked conversation survives cleanup.
+const DEBRIEF_DIR = process.env.DEBRIEF_DIR || path.join(os.homedir(), ".debrief");
+const LIKED_FILE = path.join(DEBRIEF_DIR, "liked-sessions.json");
+const BACKUPS_DIR = path.join(DEBRIEF_DIR, "backups");
+
+interface LikedEntry { likedAt: string; backedUpAt?: string }
+type LikedStore = Record<string, Record<string, LikedEntry>>; // project -> session -> entry
+
+function readLikedSessions(): LikedStore {
+  try {
+    return JSON.parse(fs.readFileSync(LIKED_FILE, "utf-8"));
+  } catch {
+    return {};
+  }
+}
+
+function writeLikedSessions(data: LikedStore): void {
+  fs.mkdirSync(DEBRIEF_DIR, { recursive: true });
+  fs.writeFileSync(LIKED_FILE, JSON.stringify(data, null, 2));
+}
+
+// A project/session name is a directory or file-stem name — never a path with
+// separators. Reject anything else before it reaches a path.join() headed for
+// the backups dir.
+function isSafeSegment(name: string): boolean {
+  return typeof name === "string" && name.length > 0 && !name.includes("..") && !name.includes("/") && !name.includes("\\");
+}
 
 const IMAGE_MIME: Record<string, string> = {
   ".png": "image/png",
@@ -80,26 +113,46 @@ function readProjectCwd(projectPath: string, jsonlFiles: string[]): string {
 
 app.get("/api/projects", (_req, res) => {
   try {
-    const projects = fs.readdirSync(PROJECTS_DIR)
-      .filter((d) => fs.statSync(path.join(PROJECTS_DIR, d)).isDirectory())
-      .map((d) => {
-        const projectPath = path.join(PROJECTS_DIR, d);
-        let latestMtime = 0;
-        const jsonlFiles: string[] = [];
-        try {
-          for (const f of fs.readdirSync(projectPath)) {
-            if (f.endsWith(".jsonl")) {
-              jsonlFiles.push(f);
-              const mt = fs.statSync(path.join(projectPath, f)).mtimeMs;
-              if (mt > latestMtime) latestMtime = mt;
+    let projects: { name: string; sessionCount: number; claudeCount: number; codexCount: number; mtime: number; cwd: string; providers: string[] }[] = [];
+    try {
+      projects = fs.readdirSync(PROJECTS_DIR)
+        .filter((d) => fs.statSync(path.join(PROJECTS_DIR, d)).isDirectory())
+        .map((d) => {
+          const projectPath = path.join(PROJECTS_DIR, d);
+          let latestMtime = 0;
+          const jsonlFiles: string[] = [];
+          try {
+            for (const f of fs.readdirSync(projectPath)) {
+              if (f.endsWith(".jsonl")) {
+                jsonlFiles.push(f);
+                const mt = fs.statSync(path.join(projectPath, f)).mtimeMs;
+                if (mt > latestMtime) latestMtime = mt;
+              }
             }
-          }
-        } catch {}
-        const cwd = readProjectCwd(projectPath, jsonlFiles);
-        return { name: d, sessionCount: jsonlFiles.length, mtime: latestMtime, cwd };
-      })
-      .sort((a, b) => b.mtime - a.mtime);
-    res.json(projects);
+          } catch {}
+          const cwd = readProjectCwd(projectPath, jsonlFiles);
+          return { name: d, sessionCount: jsonlFiles.length, claudeCount: jsonlFiles.length, codexCount: 0, mtime: latestMtime, cwd, providers: ["claude"] };
+        });
+    } catch { /* no Claude projects dir — Codex-only setups still get a list */ }
+
+    // Codex sessions merge into the same list: their project key uses Claude
+    // Code's cwd encoding, so same-directory sessions share one entry.
+    for (const [key, info] of codexProjects(CODEX_SESSIONS_DIR)) {
+      const existing = projects.find((p) => p.name === key);
+      if (existing) {
+        existing.sessionCount += info.sessionCount;
+        existing.codexCount = info.sessionCount;
+        if (info.mtime > existing.mtime) existing.mtime = info.mtime;
+        if (!existing.cwd) existing.cwd = info.cwd;
+        existing.providers.push("codex");
+      } else {
+        projects.push({ name: key, sessionCount: info.sessionCount, claudeCount: 0, codexCount: info.sessionCount, mtime: info.mtime, cwd: info.cwd, providers: ["codex"] });
+      }
+    }
+
+    projects.sort((a, b) => b.mtime - a.mtime);
+    const liked = readLikedSessions();
+    res.json(projects.map((p) => ({ ...p, likedCount: Object.keys(liked[p.name] || {}).length })));
   } catch {
     res.json([]);
   }
@@ -108,9 +161,11 @@ app.get("/api/projects", (_req, res) => {
 app.get("/api/projects/:project/sessions", (req, res) => {
   try {
     const projectDir = path.join(PROJECTS_DIR, req.params.project);
-    const files = fs
-      .readdirSync(projectDir)
-      .filter((f) => f.endsWith(".jsonl"))
+    let claudeFiles: string[] = [];
+    try {
+      claudeFiles = fs.readdirSync(projectDir).filter((f) => f.endsWith(".jsonl"));
+    } catch { /* Codex-only project — no Claude dir with this name */ }
+    const files = claudeFiles
       .map((f) => {
         const stat = fs.statSync(path.join(projectDir, f));
         const lines = fs
@@ -150,25 +205,87 @@ app.get("/api/projects/:project/sessions", (req, res) => {
           lineCount: lines.length,
           slug,
           preview: firstUserMsg,
+          provider: "claude" as const,
         };
-      })
+      });
+
+    const merged = [...files, ...codexSessionsForProject(CODEX_SESSIONS_DIR, req.params.project)]
       .sort(
         (a, b) =>
           new Date(b.modified).getTime() - new Date(a.modified).getTime()
       );
-    res.json(files);
+    const liked = readLikedSessions()[req.params.project] || {};
+    res.json(merged.map((s) => ({ ...s, liked: !!liked[s.id], backedUpAt: liked[s.id]?.backedUpAt })));
   } catch {
     res.json([]);
   }
 });
 
+// Resolve a session id to its on-disk file. Claude sessions live under the
+// project dir; Codex sessions are found via the sessions-tree index. Ids
+// can't collide: Claude ids are bare uuids, Codex ids are "rollout-…" names.
+function resolveSessionFile(project: string, session: string): { filePath: string; provider: "claude" | "codex" } | null {
+  const claudePath = path.join(PROJECTS_DIR, project, session + ".jsonl");
+  if (fs.existsSync(claudePath)) return { filePath: claudePath, provider: "claude" };
+  const codex = findCodexSession(CODEX_SESSIONS_DIR, session);
+  if (codex && codex.projectKey === project) return { filePath: codex.path, provider: "codex" };
+  return null;
+}
+
+// Snapshot a single session's file (plus its subagents dir, for Claude) into
+// BACKUPS_DIR/<project>/. Safe to call repeatedly — it just re-copies the
+// current file, so re-liking refreshes the backup with new messages.
+function backupSession(project: string, session: string): void {
+  const resolved = resolveSessionFile(project, session);
+  if (!resolved) throw new Error("Session not found");
+  const dest = path.join(BACKUPS_DIR, project);
+  fs.mkdirSync(dest, { recursive: true });
+  fs.copyFileSync(resolved.filePath, path.join(dest, path.basename(resolved.filePath)));
+  if (resolved.provider === "claude") {
+    const companionDir = path.join(PROJECTS_DIR, project, session);
+    if (fs.existsSync(companionDir) && fs.statSync(companionDir).isDirectory()) {
+      fs.cpSync(companionDir, path.join(dest, session), { recursive: true });
+    }
+  }
+}
+
+app.post("/api/projects/:project/sessions/:session/like", (req, res) => {
+  const { project, session } = req.params;
+  if (!isSafeSegment(project) || !isSafeSegment(session)) { res.status(400).json({ error: "Invalid project or session name" }); return; }
+  try {
+    backupSession(project, session);
+    const liked = readLikedSessions();
+    const forProject = liked[project] || (liked[project] = {});
+    const now = new Date().toISOString();
+    forProject[session] = { likedAt: forProject[session]?.likedAt || now, backedUpAt: now };
+    writeLikedSessions(liked);
+    res.json({ liked: true, backedUpAt: now });
+  } catch {
+    res.status(500).json({ error: "Failed to like session" });
+  }
+});
+
+app.delete("/api/projects/:project/sessions/:session/like", (req, res) => {
+  const { project, session } = req.params;
+  if (!isSafeSegment(project) || !isSafeSegment(session)) { res.status(400).json({ error: "Invalid project or session name" }); return; }
+  try {
+    const liked = readLikedSessions();
+    if (liked[project]) {
+      delete liked[project][session];
+      if (Object.keys(liked[project]).length === 0) delete liked[project];
+    }
+    writeLikedSessions(liked);
+    res.json({ liked: false });
+  } catch {
+    res.status(500).json({ error: "Failed to unlike session" });
+  }
+});
+
 app.get("/api/projects/:project/sessions/:session", (req, res) => {
   try {
-    const filePath = path.join(
-      PROJECTS_DIR,
-      req.params.project,
-      req.params.session + ".jsonl"
-    );
+    const resolved = resolveSessionFile(req.params.project, req.params.session);
+    if (!resolved) { res.status(404).json({ error: "Session not found" }); return; }
+    const { filePath } = resolved;
     // Conditional GET: poll fires every few seconds; when the .jsonl file
     // hasn't been touched we return 304 so the browser tab loader barely
     // flickers and the client skips its re-normalize pass entirely.
@@ -371,7 +488,17 @@ app.get("/api/projects/:project/sessions/:session/agents", (req, res) => {
       req.params.session,
       "subagents"
     );
-    if (!fs.existsSync(subagentsDir)) { res.json([]); return; }
+    if (!fs.existsSync(subagentsDir)) {
+      // Not a Claude session (or one with no subagents dir yet) — check
+      // whether it's a Codex session with spawn_agent children instead.
+      const codexSession = findCodexSession(CODEX_SESSIONS_DIR, req.params.session);
+      if (codexSession && codexSession.projectKey === req.params.project) {
+        res.json(codexAgentsForSession(CODEX_SESSIONS_DIR, codexSession));
+      } else {
+        res.json([]);
+      }
+      return;
+    }
 
     const lineCountOf = (jsonlFile: string) => {
       try { return fs.readFileSync(jsonlFile, "utf-8").split("\n").filter(Boolean).length; }
@@ -418,7 +545,17 @@ app.get("/api/projects/:project/sessions/:session/agents", (req, res) => {
 app.delete("/api/projects/:project/sessions", (req, res) => {
   try {
     const projectDir = path.join(PROJECTS_DIR, req.params.project);
-    const files = fs.readdirSync(projectDir);
+    let files: string[] = [];
+    try { files = fs.readdirSync(projectDir); } catch { /* Codex-only project */ }
+    // Resolve the project's real cwd BEFORE deleting anything: the encoded
+    // key is lossy ("/x/foo-bar" and "/x/foo/bar" collide), so Codex files
+    // are only removed when their exact cwd matches — never on key match
+    // alone, which could reach into an unrelated project's traces.
+    const claudeCwd = readProjectCwd(projectDir, files.filter((f) => f.endsWith(".jsonl")));
+    const codexEntries = codexEntriesForProject(CODEX_SESSIONS_DIR, req.params.project);
+    const targetCwd = claudeCwd
+      || codexEntries.reduce((best, e) => (e.mtimeMs > (best?.mtimeMs ?? -1) ? e : best), codexEntries[0])?.cwd
+      || "";
     for (const f of files) {
       const fp = path.join(projectDir, f);
       if (f.endsWith(".jsonl")) {
@@ -429,28 +566,12 @@ app.delete("/api/projects/:project/sessions", (req, res) => {
         }
       }
     }
-    res.json({ ok: true });
-  } catch {
-    res.status(500).json({ error: "Failed to delete sessions" });
-  }
-});
-
-app.delete("/api/projects/:project/sessions/:session", (req, res) => {
-  try {
-    const filePath = path.join(
-      PROJECTS_DIR,
-      req.params.project,
-      req.params.session + ".jsonl"
-    );
-    fs.unlinkSync(filePath);
-    // Also remove companion directory if exists
-    const dirPath = path.join(PROJECTS_DIR, req.params.project, req.params.session);
-    if (fs.existsSync(dirPath) && fs.statSync(dirPath).isDirectory()) {
-      fs.rmSync(dirPath, { recursive: true });
+    for (const e of codexEntries) {
+      if (targetCwd && e.cwd === targetCwd) fs.unlinkSync(e.path);
     }
     res.json({ ok: true });
   } catch {
-    res.status(404).json({ error: "Session not found" });
+    res.status(500).json({ error: "Failed to delete sessions" });
   }
 });
 

@@ -1,7 +1,23 @@
-import { useMemo, useState } from "react";
-import type { ProjectMeta, SessionInfo } from "../types";
+import { useEffect, useMemo, useState } from "react";
+import type { ProjectMeta, Provider, SessionInfo } from "../types";
 import { Icons } from "../lib/icons";
 import { modelFamily, relTime } from "../lib/format";
+
+type ProviderFilter = "all" | Provider;
+const PROVIDER_FILTERS: ProviderFilter[] = ["all", "claude", "codex"];
+
+function readInitialProviderFilter(): ProviderFilter {
+  try {
+    const v = window.localStorage.getItem("trace-viewer-provider");
+    return v === "claude" || v === "codex" ? v : "all";
+  } catch { return "all"; }
+}
+
+function readInitialFavoritesOnly(): boolean {
+  try {
+    return window.localStorage.getItem("trace-viewer-favorites-only") === "1";
+  } catch { return false; }
+}
 
 interface Props {
   projects: ProjectMeta[];
@@ -10,7 +26,7 @@ interface Props {
   sessions: SessionInfo[];
   selectedSession: string | null;
   onSelectSession: (id: string) => void;
-  onDeleteSession: (id: string) => void;
+  onToggleLikeSession: (projectId: string, sessionId: string, wasLiked: boolean) => void;
   onDeleteAllSessions: () => void;
   onResizeStart?: (e: React.MouseEvent) => void;
 }
@@ -20,6 +36,9 @@ interface ProjectNode {
   group: string;
   leaf: string;
   sessionCount: number;
+  claudeCount: number;
+  codexCount: number;
+  likedCount: number;
 }
 
 function decodeProject(p: ProjectMeta): ProjectNode {
@@ -33,7 +52,23 @@ function decodeProject(p: ProjectMeta): ProjectNode {
     : p.name.replace(/^-(?:Users|home)-[^-]+-/, "").replace(/-/g, "/").split("/").filter(Boolean);
   const leaf = parts[parts.length - 1] || p.name;
   const group = parts.slice(Math.max(0, parts.length - 3), parts.length - 1).join("/");
-  return { id: p.name, group: group ? group + "/" : "", leaf, sessionCount: p.sessionCount };
+  return {
+    id: p.name,
+    group: group ? group + "/" : "",
+    leaf,
+    sessionCount: p.sessionCount,
+    // Older server responses predate per-provider counts — everything claude.
+    claudeCount: p.claudeCount ?? p.sessionCount,
+    codexCount: p.codexCount ?? 0,
+    likedCount: p.likedCount ?? 0,
+  };
+}
+
+function nodeCount(p: ProjectNode, filter: ProviderFilter, favoritesOnly: boolean): number {
+  if (favoritesOnly) return p.likedCount;
+  if (filter === "claude") return p.claudeCount;
+  if (filter === "codex") return p.codexCount;
+  return p.sessionCount;
 }
 
 function isLive(modifiedIso: string): boolean {
@@ -74,20 +109,26 @@ function sessionCommand(s: SessionInfo): string | null {
   return bare ? bare[1] : null;
 }
 
-function SessionRow({ s, active, onSelect, onDelete }: { s: SessionInfo; active: boolean; onSelect: (id: string) => void; onDelete: (id: string) => void }) {
+function SessionRow({ s, active, onSelect, onToggleLike }: { s: SessionInfo; active: boolean; onSelect: (id: string) => void; onToggleLike: () => void }) {
   const live = isLive(s.modified);
   const cmd = sessionCommand(s);
   const title = sessionTitle(s);
   // Heuristic for model — slug ends with model id? otherwise unknown
   const fam = modelFamily("");
+  const likeTitle = s.liked
+    ? `Liked — backed up ${s.backedUpAt ? relTime(s.backedUpAt) : "just now"}`
+    : "Like & back up this conversation";
   return (
-    <button className={"sess-row " + (active ? "active" : "")} onClick={() => onSelect(s.id)}>
+    <button className={"sess-row " + (active ? "active" : "") + (s.liked ? " liked" : "")} onClick={() => onSelect(s.id)}>
       <span className={"sess-dot " + (live ? "live" : "")} style={{ "--mc": `var(--${fam})` } as React.CSSProperties}>
         {live ? <span className="live-dot" /> : null}
       </span>
       <span className="sess-body">
         <span className="sess-line1">
           {cmd ? <span className="sess-cmd">{cmd}</span> : <span className="sess-title">{title}</span>}
+          <span className={"sess-provider " + (s.provider === "codex" ? "codex" : "claude")}>
+            {s.provider === "codex" ? "codex" : "claude"}
+          </span>
           {live ? <span className="sess-livetag">live</span> : null}
         </span>
         {cmd ? <span className="sess-preview">{title.replace(cmd, "").trim() || s.slug}</span> : null}
@@ -100,14 +141,12 @@ function SessionRow({ s, active, onSelect, onDelete }: { s: SessionInfo; active:
       <span
         role="button"
         tabIndex={-1}
-        className="sess-delete"
-        title="Delete session"
-        onClick={(e) => {
-          e.stopPropagation();
-          if (confirm("Delete this session?")) onDelete(s.id);
-        }}
+        aria-label={likeTitle}
+        className={"sess-like " + (s.liked ? "liked" : "")}
+        title={likeTitle}
+        onClick={(e) => { e.stopPropagation(); onToggleLike(); }}
       >
-        ✕
+        <Icons.heart size={13} fill={s.liked} stroke={!s.liked} />
       </span>
     </button>
   );
@@ -154,17 +193,33 @@ export function Sidebar({
   sessions,
   selectedSession,
   onSelectSession,
-  onDeleteSession,
+  onToggleLikeSession,
   onDeleteAllSessions,
   onResizeStart,
 }: Props) {
   const [query, setQuery] = useState("");
+  const [providerFilter, setProviderFilter] = useState<ProviderFilter>(readInitialProviderFilter);
+  const [favoritesOnly, setFavoritesOnly] = useState<boolean>(readInitialFavoritesOnly);
+
+  useEffect(() => {
+    try { window.localStorage.setItem("trace-viewer-provider", providerFilter); } catch { /* private mode */ }
+  }, [providerFilter]);
+
+  useEffect(() => {
+    try { window.localStorage.setItem("trace-viewer-favorites-only", favoritesOnly ? "1" : "0"); } catch { /* private mode */ }
+  }, [favoritesOnly]);
 
   const projectNodes = useMemo(
-    () => projects.map(decodeProject).filter(p => p.sessionCount > 0),
-    [projects]
+    () => projects.map(decodeProject).filter(p => nodeCount(p, providerFilter, favoritesOnly) > 0),
+    [projects, providerFilter, favoritesOnly]
   );
-  const sessionsForSelected = sessions;
+  const sessionsForSelected = useMemo(() => {
+    let list = providerFilter === "all"
+      ? sessions
+      : sessions.filter(s => (s.provider ?? "claude") === providerFilter);
+    if (favoritesOnly) list = list.filter(s => s.liked);
+    return list;
+  }, [sessions, providerFilter, favoritesOnly]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -213,12 +268,35 @@ export function Sidebar({
 
       <div className="nav-head">
         <span className="nav-head-label"><Icons.folder size={12} /> projects</span>
-        <span className="nav-head-meta">~/.claude/projects</span>
+        <div className="nav-head-actions">
+          <button
+            type="button"
+            className={"favs-toggle " + (favoritesOnly ? "active" : "")}
+            aria-pressed={favoritesOnly}
+            title={favoritesOnly ? "Showing favorites only" : "Show favorites only"}
+            onClick={() => setFavoritesOnly(v => !v)}
+          >
+            <Icons.heart size={12} fill={favoritesOnly} stroke={!favoritesOnly} />
+          </button>
+          <div className="provider-seg" role="group" aria-label="Filter sessions by provider">
+            {PROVIDER_FILTERS.map(v => (
+              <button
+                key={v}
+                type="button"
+                className={"provider-seg-btn " + v + (providerFilter === v ? " active" : "")}
+                aria-pressed={providerFilter === v}
+                onClick={() => setProviderFilter(v)}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="nav-scroll">
         {filtered.length === 0 ? (
-          <div className="sidebar-empty">No projects</div>
+          <div className="sidebar-empty">{favoritesOnly ? "No favorites yet" : "No projects"}</div>
         ) : (
           filtered.map(p => {
             const isSel = p.id === selectedProject;
@@ -229,11 +307,11 @@ export function Sidebar({
                 proj={p}
                 open={isSel}
                 onToggle={() => onSelectProject(isSel ? null : p.id)}
-                childCount={isSel ? childList.length : p.sessionCount}
+                childCount={isSel ? childList.length : nodeCount(p, providerFilter, favoritesOnly)}
                 hasLive={isSel && liveCount > 0}
               >
                 {isSel && childList.length === 0 ? (
-                  <div className="sidebar-empty" style={{ padding: "8px 4px" }}>no sessions</div>
+                  <div className="sidebar-empty" style={{ padding: "8px 4px" }}>{favoritesOnly ? "no liked sessions" : "no sessions"}</div>
                 ) : null}
                 {isSel && childList.map(s => (
                   <SessionRow
@@ -241,7 +319,7 @@ export function Sidebar({
                     s={s}
                     active={s.id === selectedSession}
                     onSelect={onSelectSession}
-                    onDelete={onDeleteSession}
+                    onToggleLike={() => onToggleLikeSession(p.id, s.id, !!s.liked)}
                   />
                 ))}
               </ProjectRow>
